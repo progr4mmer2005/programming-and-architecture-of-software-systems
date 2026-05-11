@@ -14,9 +14,6 @@ venv/
 backend/staticfiles/
 backend/media/
 
-# Environment
-.env
-backend/.env
 
 # Node
 node_modules/
