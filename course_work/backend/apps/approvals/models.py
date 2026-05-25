@@ -46,7 +46,7 @@ class ApprovalTask(models.Model):
         null=True, blank=True, related_name='tasks', verbose_name='Маршрут',
     )
     stage_order = models.IntegerField(verbose_name='Порядок этапа')
-    role = models.CharField(max_length=20, verbose_name='Роль согласующего')
+    role = models.CharField(max_length=80, verbose_name='Роль согласующего')
     assigned_to = models.ForeignKey(
         'accounts.User', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='approval_tasks', verbose_name='Назначен',

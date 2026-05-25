@@ -1,25 +1,29 @@
-from django.utils import timezone
+﻿from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
-from .models import ApprovalRoute, ApprovalTask
-from .serializers import ApprovalActionSerializer, ApprovalRouteSerializer, ApprovalTaskSerializer
 from apps.audit.models import AuditLog
 from apps.core.mixins import OrganizationContextMixin
 from apps.core.permissions import (
     CanManageApprovalRoutes,
     CanProcessApprovalTasks,
     CanViewApprovals,
+    role_has_permission,
     scope_approval_tasks_queryset,
 )
+
+from .models import ApprovalRoute, ApprovalTask
+from .serializers import ApprovalActionSerializer, ApprovalRouteSerializer, ApprovalTaskSerializer
 
 
 class ApprovalRouteViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
     """Manage approval route templates."""
+
     serializer_class = ApprovalRouteSerializer
+
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             permission_classes = [permissions.IsAuthenticated, CanViewApprovals]
@@ -36,6 +40,7 @@ class ApprovalRouteViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
 
 class ApprovalTaskViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
     """Manage approval tasks for contracts."""
+
     serializer_class = ApprovalTaskSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     search_fields = ['contract__title']
@@ -57,17 +62,14 @@ class ApprovalTaskViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
         return scope_approval_tasks_queryset(queryset, self.request.user)
 
     def _ensure_task_is_mine(self, task):
-        if self.request.user.role == 'owner':
-            return
         if task.assigned_to and task.assigned_to_id == self.request.user.id:
             return
-        if task.assigned_to_id is None and task.role == self.request.user.role:
-            return
-        raise PermissionDenied('Вы можете работать только со своими задачами согласования.')
+        if task.assigned_to_id is None:
+            raise PermissionDenied('По этой задаче не назначен ответственный согласующий.')
+        raise PermissionDenied('Согласовать или отклонить задачу может только назначенный ответственный.')
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        """Approve the current task."""
         task = self.get_object()
         self._ensure_task_is_mine(task)
         if task.status != ApprovalTask.Status.PENDING:
@@ -83,7 +85,6 @@ class ApprovalTaskViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
-        """Reject the current task."""
         task = self.get_object()
         self._ensure_task_is_mine(task)
         if task.status != ApprovalTask.Status.PENDING:
@@ -98,16 +99,14 @@ class ApprovalTaskViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def assign_deadline(self, request, pk=None):
-        """Assign or clear approval deadline."""
-        if not request.user.role in ['owner', 'manager', 'admin']:
-            raise PermissionDenied('Изменение сроков доступно только инициатору или администратору.')
+        if not (role_has_permission(request.user, 'can_manage_approval_routes') or role_has_permission(request.user, 'can_manage_contracts')):
+            raise PermissionDenied('Изменение сроков доступно только пользователям с правом управления согласованием.')
         task = self.get_object()
         task.deadline = request.data.get('deadline') or None
         task.save(update_fields=['deadline'])
         return Response(ApprovalTaskSerializer(task).data)
 
     def _activate_next_stage(self, task):
-        """Activate the next approval stage if all current stage tasks are approved."""
         current_stage_tasks = ApprovalTask.objects.filter(
             contract=task.contract,
             stage_order=task.stage_order,

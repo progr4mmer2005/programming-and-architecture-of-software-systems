@@ -1,22 +1,24 @@
 ﻿import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, ChartColumnIncreasing, ShieldCheck, WalletCards } from 'lucide-react';
-import { useAuthStore } from '@/stores/authStore';
-import { Badge, Button, Field, Input, Surface } from '@/shared/components/ui';
 
-const demoAccounts = [
-  { role: 'Владелец', credentials: 'owner / owner123' },
-  { role: 'Руководитель', credentials: 'director / dir123' },
-  { role: 'Менеджер', credentials: 'manager / manager123' },
-];
+import { Badge, Button, Field, Input, Surface } from '@/shared/components/ui';
+import { useAuthStore } from '@/stores/authStore';
+
+type Mode = 'login' | 'register';
 
 export default function LoginPage() {
-  const [username, setUsername] = useState('owner');
-  const [password, setPassword] = useState('owner123');
+  const [mode, setMode] = useState<Mode>('login');
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
+  const register = useAuthStore((state) => state.register);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -24,10 +26,24 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      await login(username, password);
-      navigate('/');
+      if (mode === 'login') {
+        await login(username, password);
+        navigate('/workspace');
+      } else {
+        await register({
+          username,
+          email,
+          password,
+          first_name: firstName,
+          last_name: lastName,
+        });
+        setMode('login');
+        setError('');
+      }
     } catch {
-      setError('Не удалось войти. Проверьте логин и пароль или убедитесь, что серверная часть запущена.');
+      setError(mode === 'login'
+        ? 'Не удалось войти. Проверьте логин и пароль или убедитесь, что серверная часть запущена.'
+        : 'Не удалось зарегистрироваться. Проверьте уникальность логина/email и корректность данных.');
     } finally {
       setSubmitting(false);
     }
@@ -35,18 +51,18 @@ export default function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
-      <div className="grid w-full max-w-7xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-        <Surface className="overflow-hidden p-8 sm:p-10 lg:p-12">
-          <div className="grid gap-10 lg:grid-cols-[1fr_0.85fr]">
+      <div className="w-full max-w-[96rem]">
+        <Surface className="overflow-hidden p-8 sm:p-10 lg:p-12 xl:p-14">
+          <div className="grid gap-10 xl:grid-cols-[minmax(0,1.18fr)_minmax(26rem,0.82fr)] xl:items-start">
             <div className="space-y-8">
               <div className="space-y-4">
                 <Badge tone="accent" className="px-4 py-2 text-[11px]">
                   Курсовой проект
                 </Badge>
-                <h1 className="section-heading max-w-xl text-5xl leading-[1.05] text-[var(--foreground)] sm:text-6xl">
+                <h1 className="section-heading max-w-[44rem] text-5xl leading-[1.02] text-[var(--foreground)] sm:text-6xl xl:text-[5.35rem]">
                   Управление договорной и сметной деятельностью без хаоса.
                 </h1>
-                <p className="max-w-xl text-base leading-8 text-[var(--muted-foreground)]">
+                <p className="max-w-[38rem] text-base leading-8 text-[var(--muted-foreground)]">
                   Единая рабочая среда для договоров, согласования, смет, платежей и командной ответственности.
                 </p>
               </div>
@@ -68,13 +84,34 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="rounded-[2rem] border border-[var(--line)] bg-[rgba(255,255,255,0.72)] p-6 sm:p-8">
+            <div className="w-full rounded-[2rem] border border-[var(--line)] bg-[rgba(255,255,255,0.72)] p-6 sm:p-8 xl:sticky xl:top-10 xl:justify-self-end">
               <div className="mb-8 space-y-2">
-                <p className="text-xs font-bold uppercase tracking-[0.26em] text-[var(--accent)]">Вход в систему</p>
-                <h2 className="section-heading text-4xl text-[var(--foreground)]">Добро пожаловать</h2>
-                <p className="text-sm leading-7 text-[var(--muted-foreground)]">
-                  Используйте тестового пользователя или свои локальные учётные данные.
+                <p className="text-xs font-bold uppercase tracking-[0.26em] text-[var(--accent)]">{mode === 'login' ? 'Вход в систему' : 'Регистрация'}</p>
+                <h2 className="section-heading text-[3.2rem] leading-[0.94] text-[var(--foreground)] sm:text-[3.6rem]">
+                  {mode === 'login' ? 'Добро пожаловать' : 'Создайте аккаунт'}
+                </h2>
+                <p className="max-w-md text-sm leading-7 text-[var(--muted-foreground)]">
+                  {mode === 'login'
+                    ? 'Войдите в систему, затем выберите рабочую организацию или примите приглашение.'
+                    : 'После регистрации Вы сможете создать свою организацию и автоматически станете Главным админом.'}
                 </p>
+              </div>
+
+              <div className="mb-5 grid grid-cols-2 gap-2 rounded-2xl border border-[var(--line)] bg-white/75 p-1">
+                <button
+                  type="button"
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${mode === 'login' ? 'bg-[var(--foreground)] text-white' : 'text-[var(--muted-foreground)]'}`}
+                  onClick={() => setMode('login')}
+                >
+                  Вход
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${mode === 'register' ? 'bg-[var(--foreground)] text-white' : 'text-[var(--muted-foreground)]'}`}
+                  onClick={() => setMode('register')}
+                >
+                  Регистрация
+                </button>
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -87,13 +124,37 @@ export default function LoginPage() {
                     required
                   />
                 </Field>
+
+                {mode === 'register' ? (
+                  <>
+                    <Field label="Email">
+                      <Input
+                        type="email"
+                        value={email}
+                        onChange={(event) => setEmail(event.target.value)}
+                        placeholder="Введите email"
+                        autoComplete="email"
+                        required
+                      />
+                    </Field>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Имя">
+                        <Input value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder="Имя" />
+                      </Field>
+                      <Field label="Фамилия">
+                        <Input value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder="Фамилия" />
+                      </Field>
+                    </div>
+                  </>
+                ) : null}
+
                 <Field label="Пароль">
                   <Input
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     placeholder="Введите пароль"
-                    autoComplete="current-password"
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                     required
                   />
                 </Field>
@@ -105,36 +166,10 @@ export default function LoginPage() {
                 ) : null}
 
                 <Button type="submit" busy={submitting} className="w-full justify-between rounded-2xl px-5 py-3.5">
-                  Войти в рабочее пространство
+                  {mode === 'login' ? 'Войти в рабочее пространство' : 'Создать аккаунт'}
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               </form>
-
-              <div className="mt-8 space-y-3">
-                <p className="text-xs font-bold uppercase tracking-[0.24em] text-[var(--muted-foreground)]">
-                  Быстрый доступ
-                </p>
-                <div className="space-y-3">
-                  {demoAccounts.map((account) => (
-                    <button
-                      key={account.role}
-                      type="button"
-                      onClick={() => {
-                        const [demoUsername, demoPassword] = account.credentials.split(' / ');
-                        setUsername(demoUsername);
-                        setPassword(demoPassword);
-                      }}
-                      className="flex w-full items-center justify-between rounded-2xl border border-[var(--line)] bg-white/75 px-4 py-3 text-left transition hover:border-[var(--line-strong)] hover:bg-white"
-                    >
-                      <span>
-                        <span className="block text-sm font-semibold text-[var(--foreground)]">{account.role}</span>
-                        <span className="block text-xs text-[var(--muted-foreground)]">{account.credentials}</span>
-                      </span>
-                      <ArrowRight className="h-4 w-4 text-[var(--muted-foreground)]" />
-                    </button>
-                  ))}
-                </div>
-              </div>
             </div>
           </div>
         </Surface>
@@ -142,5 +177,3 @@ export default function LoginPage() {
     </div>
   );
 }
-
-

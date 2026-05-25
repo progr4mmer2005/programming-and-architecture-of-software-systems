@@ -7,7 +7,6 @@ from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.accounts.models import User
 from apps.approvals.models import ApprovalTask
 from apps.contracts.models import Contract
 from apps.contracts.services import calculateContractActualAmount, calculateContractDebt, calculateContractPaidAmount, calculateContractPlannedAmount
@@ -19,7 +18,7 @@ from apps.stages.services import calculateStageActualAmount, calculateStagePlann
 
 
 class DashboardViewSet(OrganizationContextMixin, viewsets.ViewSet):
-    role_labels = dict(User.Role.choices)
+    role_labels = {'super_admin': 'Главный админ', 'user': 'Пользователь'}
 
     def get_permissions(self):
         if self.action == 'execution_report':
@@ -37,7 +36,7 @@ class DashboardViewSet(OrganizationContextMixin, viewsets.ViewSet):
 
     def _approval_assignee_label(self, task: ApprovalTask) -> str:
         if task.assigned_to:
-            return task.assigned_to.get_full_name() or task.assigned_to.get_role_display() or task.assigned_to.username
+            return task.assigned_to.get_full_name() or task.assigned_to.role or task.assigned_to.username
         return self.role_labels.get(task.role, task.role)
 
     @action(detail=False, methods=['get'])
@@ -52,7 +51,7 @@ class DashboardViewSet(OrganizationContextMixin, viewsets.ViewSet):
             'active_contracts': contracts.filter(status__in=[Contract.Status.ACTIVE, Contract.Status.SIGNED]).count(),
             'draft_contracts': contracts.filter(status=Contract.Status.DRAFT).count(),
             'approval_pending': contracts.filter(status=Contract.Status.ON_APPROVAL).count(),
-            'total_contractors': org.contractor_links.filter(is_active=True).count() if request.user.role != User.Role.LAWYER else 0,
+            'total_contractors': org.contractor_links.filter(is_active=True).count(),
             'total_amount': total_amount,
             'upcoming_payments_count': payments.filter(type='planned', status='pending', planned_date__gte=now.date()).count(),
         })

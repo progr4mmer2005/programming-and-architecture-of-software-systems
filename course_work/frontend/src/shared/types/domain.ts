@@ -13,8 +13,11 @@ export interface User {
   last_name: string;
   patronymic?: string;
   full_name: string;
-  role: UserRole;
+  role: string;
   organization: number | null;
+  org_role?: string;
+  org_role_id?: number | null;
+  org_role_name?: string;
   phone?: string;
   position?: string;
   avatar?: string | null;
@@ -43,6 +46,37 @@ export interface OrganizationStats {
   members_count: number;
   contracts_count: number;
   contractors_count: number;
+}
+
+export interface RoleDefinition {
+  id: number;
+  name: string;
+  code: string;
+  permissions: Record<string, boolean>;
+  is_system: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface Invitation {
+  id: number;
+  organization: number;
+  organization_name?: string;
+  email: string;
+  role: number;
+  role_name?: string;
+  status: 'pending' | 'accepted' | 'declined' | 'expired';
+  message?: string;
+  created_at?: string;
+}
+
+export interface OrganizationMembership {
+  id: number;
+  organization: number;
+  organization_name?: string;
+  role: RoleDefinition;
+  is_active: boolean;
+  created_at?: string;
 }
 
 export interface Contractor {
@@ -85,7 +119,7 @@ export interface ContractTemplate {
   updated_at?: string;
 }
 
-export type UserRole = 'owner' | 'director' | 'manager' | 'approver' | 'admin';
+export type UserRole = string;
 export type ContractPriceType = 'fixed' | 'estimate_based' | 'free' | 'not_specified' | 'by_rates';
 export type ContractStatus = 'draft' | 'on_approval' | 'ready_to_sign' | 'signed' | 'active' | 'completed' | 'terminated';
 export type EstimateStatus = 'draft' | 'under_review' | 'approved' | 'rejected' | 'archived';
@@ -297,6 +331,8 @@ export interface ApprovalRouteStage {
   role: string;
   order: number;
   name: string;
+  assigned_to?: number | null;
+  assigned_to_name?: string;
 }
 
 export interface ApprovalRoute {
@@ -417,12 +453,22 @@ export interface CalendarEventsResponse {
 }
 
 export const roleOptions = [
-  { value: 'owner', label: 'Владелец' },
+  { value: 'super_admin', label: 'Главный админ' },
+  { value: 'user', label: 'Пользователь' },
+  { value: 'owner', label: 'Администратор' },
   { value: 'director', label: 'Руководитель' },
   { value: 'manager', label: 'Менеджер' },
   { value: 'approver', label: 'Согласующее лицо' },
-  { value: 'admin', label: 'Администратор' },
 ];
+
+export const roleLabels: Record<string, string> = {
+  super_admin: 'Главный админ',
+  user: 'Пользователь',
+  owner: 'Администратор',
+  director: 'Руководитель',
+  manager: 'Менеджер',
+  approver: 'Согласующее лицо',
+};
 
 export const contractStatusOptions = [
   { value: 'draft', label: 'Черновик' },

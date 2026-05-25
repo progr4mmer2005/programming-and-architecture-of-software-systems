@@ -1,20 +1,15 @@
-﻿import { useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, Plus, UsersRound, Wallet } from 'lucide-react';
+
 import apiClient from '@/api/client';
-import { formatNumber, getResults } from '@/shared/lib/format';
 import { useAuthStore } from '@/stores/authStore';
-import type {
-  Organization,
-  OrganizationStats,
-  PaginatedResponse,
-  ReferenceEntry,
-  User,
-} from '@/shared/types/domain';
-import { roleOptions } from '@/shared/types/domain';
+import { formatNumber, getResults } from '@/shared/lib/format';
+import type { ApprovalRoute, Organization, OrganizationStats, PaginatedResponse, RoleDefinition, User, Invitation } from '@/shared/types/domain';
+import { roleLabels, roleOptions } from '@/shared/types/domain';
 import {
   Badge,
   Button,
+  Checkbox,
   EmptyState,
   Field,
   Input,
@@ -24,550 +19,78 @@ import {
   SectionCard,
   Select,
   StatCard,
-  Tabs,
   Textarea,
 } from '@/shared/components/ui';
 
-type OrganizationTab = 'profile' | 'team' | 'references';
+const permissionLabels: Record<string, string> = {
+  can_view_dashboard: 'Просмотр главной',
+  can_view_contracts: 'Просмотр договоров',
+  can_manage_contracts: 'Управление договорами',
+  can_launch_approval: 'Запуск согласования',
+  can_view_contractors: 'Просмотр контрагентов',
+  can_manage_contractors: 'Управление контрагентами',
+  can_view_templates: 'Просмотр шаблонов',
+  can_manage_templates: 'Управление шаблонами',
+  can_view_estimates: 'Просмотр смет',
+  can_manage_estimates: 'Управление сметами',
+  can_view_approvals: 'Просмотр согласований',
+  can_manage_approval_routes: 'Управление маршрутами согласования',
+  can_process_approval_tasks: 'Обработка задач согласования',
+  can_view_payments: 'Просмотр платежей',
+  can_manage_payments: 'Управление платежами',
+  can_view_calendar: 'Просмотр календаря',
+  can_view_reports: 'Просмотр отчётов',
+  can_view_organization: 'Просмотр организации',
+  can_manage_organization: 'Управление организацией',
+  can_manage_users: 'Управление пользователями',
+  can_manage_references: 'Управление НСИ',
+  can_view_audit: 'Просмотр аудита',
+  scoped_to_assigned_contracts: 'Доступ только к назначенным договорам',
+};
 
-interface OrganizationFormState {
+const permissionKeys = Object.keys(permissionLabels);
+const protectedRoleCodes = new Set(['user', 'super_admin']);
+
+function createPermissionDraft(initial?: Record<string, boolean>) {
+  return permissionKeys.reduce<Record<string, boolean>>((acc, key) => {
+    acc[key] = Boolean(initial?.[key]);
+    return acc;
+  }, {});
+}
+
+interface RouteWizardFormState {
   name: string;
-  legal_name: string;
-  inn: string;
-  kpp: string;
-  ogrn: string;
-  address: string;
   is_active: boolean;
+  stages: Array<{ name: string; role: string; assigned_to: number | null; order: number }>;
 }
 
-interface InviteFormState {
-  username: string;
-  email: string;
-  password: string;
-  first_name: string;
-  last_name: string;
-  patronymic: string;
-  role: string;
-  phone: string;
-  position: string;
-}
-
-interface ReferenceFormState {
-  id?: number;
-  category: string;
-  code: string;
-  label: string;
-  description: string;
-  sort_order: string;
-  is_active: boolean;
-  metadata_rate: string;
-}
-
-interface OrganizationPermissions {
-  canManageOrganization: boolean;
-  canManageUsers: boolean;
-  canManageReferences: boolean;
-}
-
-const emptyInvite: InviteFormState = {
-  username: '',
-  email: '',
-  password: '',
-  first_name: '',
-  last_name: '',
-  patronymic: '',
-  role: 'manager',
-  phone: '',
-  position: '',
-};
-
-const emptyReference: ReferenceFormState = {
-  category: 'currency',
-  code: '',
-  label: '',
-  description: '',
-  sort_order: '100',
+const initialRouteForm: RouteWizardFormState = {
+  name: '',
   is_active: true,
-  metadata_rate: '',
+  stages: [
+    { name: 'Первичная проверка', role: '', assigned_to: null, order: 1 },
+    { name: 'Финальное утверждение', role: '', assigned_to: null, order: 2 },
+  ],
 };
-
-function ReadonlyField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/75 p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">{label}</p>
-      <p className="mt-3 break-words text-sm leading-7 text-[var(--foreground)]">{value || 'Не заполнено'}</p>
-    </div>
-  );
-}
-
-function OrganizationContent({
-  organization,
-  users,
-  stats,
-  references,
-  access,
-}: {
-  organization: Organization;
-  users: User[];
-  stats?: OrganizationStats;
-  references: ReferenceEntry[];
-  access: OrganizationPermissions;
-}) {
-  const queryClient = useQueryClient();
-  const [tab, setTab] = useState<OrganizationTab>('profile');
-  const [organizationForm, setOrganizationForm] = useState<OrganizationFormState>({
-    name: organization.name || '',
-    legal_name: organization.legal_name || '',
-    inn: organization.inn || '',
-    kpp: organization.kpp || '',
-    ogrn: organization.ogrn || '',
-    address: organization.address || '',
-    is_active: organization.is_active,
-  });
-  const [isInviteOpen, setIsInviteOpen] = useState(false);
-  const [inviteForm, setInviteForm] = useState<InviteFormState>(emptyInvite);
-  const [isReferenceOpen, setIsReferenceOpen] = useState(false);
-  const [referenceForm, setReferenceForm] = useState<ReferenceFormState>(emptyReference);
-  const [error, setError] = useState('');
-  const [roleDrafts, setRoleDrafts] = useState<Record<number, string>>({});
-
-  const groupedReferences = useMemo(() => ({
-    currency: references.filter((item) => item.category === 'currency'),
-    contract_status: references.filter((item) => item.category === 'contract_status'),
-  }), [references]);
-
-  const openReferenceCreate = (category: string) => {
-    if (!access.canManageReferences) {
-      return;
-    }
-    setReferenceForm({ ...emptyReference, category });
-    setIsReferenceOpen(true);
-  };
-
-  const openReferenceEdit = (reference: ReferenceEntry) => {
-    if (!access.canManageReferences) {
-      return;
-    }
-    setReferenceForm({
-      id: reference.id,
-      category: reference.category,
-      code: reference.code,
-      label: reference.label,
-      description: reference.description || '',
-      sort_order: String(reference.sort_order || 100),
-      is_active: reference.is_active,
-      metadata_rate: String(reference.metadata?.rate ?? ''),
-    });
-    setIsReferenceOpen(true);
-  };
-
-  const saveOrganizationMutation = useMutation({
-    mutationFn: () => apiClient.patch(`/organizations/${organization.id}/`, organizationForm),
-    onSuccess: async () => {
-      setError('');
-      await queryClient.invalidateQueries({ queryKey: ['organization'] });
-      await queryClient.invalidateQueries({ queryKey: ['organization', 'stats'] });
-    },
-    onError: () => setError('Не удалось сохранить профиль организации.'),
-  });
-
-  const inviteMutation = useMutation({
-    mutationFn: () => apiClient.post('/users/', inviteForm),
-    onSuccess: async () => {
-      setInviteForm(emptyInvite);
-      setIsInviteOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ['organization', 'users'] });
-      await queryClient.invalidateQueries({ queryKey: ['organization', 'stats'] });
-    },
-    onError: () => setError('Не удалось создать пользователя. Проверьте логин, email и пароль.'),
-  });
-
-  const changeRoleMutation = useMutation({
-    mutationFn: ({ userId, role }: { userId: number; role: string }) => apiClient.post(`/users/${userId}/change_role/`, { role }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['organization', 'users'] });
-    },
-  });
-
-  const changeActivityMutation = useMutation({
-    mutationFn: ({ userId, isActive }: { userId: number; isActive: boolean }) => apiClient.post(`/users/${userId}/set_active/`, { is_active: isActive }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['organization', 'users'] });
-    },
-  });
-
-  const saveReferenceMutation = useMutation({
-    mutationFn: () => {
-      const payload = {
-        category: referenceForm.category,
-        code: referenceForm.code,
-        label: referenceForm.label,
-        description: referenceForm.description,
-        sort_order: Number(referenceForm.sort_order || 100),
-        is_active: referenceForm.is_active,
-        metadata: referenceForm.category === 'currency' && referenceForm.metadata_rate
-          ? { rate: Number(referenceForm.metadata_rate) }
-          : {},
-      };
-      return referenceForm.id
-        ? apiClient.patch(`/reference-entries/${referenceForm.id}/`, payload)
-        : apiClient.post('/reference-entries/', payload);
-    },
-    onSuccess: async () => {
-      setIsReferenceOpen(false);
-      setReferenceForm(emptyReference);
-      await queryClient.invalidateQueries({ queryKey: ['organization', 'references'] });
-    },
-  });
-
-  const renderReferenceList = (items: ReferenceEntry[], kind: 'currency' | 'contract_status') => {
-    if (!items.length) {
-      return null;
-    }
-
-    return (
-      <div className="grid gap-3 xl:grid-cols-2">
-        {items.map((reference) => {
-          const content = (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-semibold text-[var(--foreground)]">
-                      {kind === 'currency' ? `${reference.code} - ${reference.label}` : reference.label}
-                    </p>
-                    <Badge tone={reference.is_active ? 'success' : 'neutral'}>
-                      {kind === 'currency' ? (reference.is_active ? 'Активна' : 'Отключена') : reference.code}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 text-xs leading-6 text-[var(--muted-foreground)]">
-                    {reference.description || 'Описание не заполнено.'}
-                  </p>
-                </div>
-                {kind === 'currency' ? (
-                  <p className="text-sm font-semibold text-[var(--foreground)]">Курс: {String(reference.metadata?.rate ?? '-')}</p>
-                ) : null}
-              </div>
-            </>
-          );
-
-          if (!access.canManageReferences) {
-            return (
-              <div key={reference.id} className="rounded-[1.5rem] border border-[var(--line)] bg-white/75 px-4 py-4">
-                {content}
-              </div>
-            );
-          }
-
-          return (
-            <button
-              key={reference.id}
-              type="button"
-              onClick={() => openReferenceEdit(reference)}
-              className="rounded-[1.5rem] border border-[var(--line)] bg-white/75 px-4 py-4 text-left transition hover:border-[var(--line-strong)] hover:bg-white"
-            >
-              {content}
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
-
-  return (
-    <div className="space-y-6">
-      <PageIntro
-        eyebrow="Профиль компании"
-        title="Организация и справочники"
-        description="Раздел объединяет сведения о компании, состав команды и системные справочники. Для ролей с просмотром он открыт как справочная витрина без управляющих действий."
-        actions={access.canManageUsers ? <Button onClick={() => setIsInviteOpen(true)} className="rounded-2xl px-5 py-3"><Plus className="h-4 w-4" />Новый пользователь</Button> : undefined}
-      />
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Пользователи" value={formatNumber(stats?.members_count)} hint={`${users.filter((user) => user.is_active !== false).length} активных`} tone="brand" icon={<UsersRound className="h-5 w-5" />} />
-        <StatCard label="Договоры" value={formatNumber(stats?.contracts_count)} hint="По текущей организации" tone="accent" icon={<Wallet className="h-5 w-5" />} />
-        <StatCard label="Контрагенты" value={formatNumber(stats?.contractors_count)} hint="Контрагенты в справочнике" tone="neutral" icon={<Building2 className="h-5 w-5" />} />
-      </div>
-
-      {error ? (
-        <div className="rounded-2xl border border-[rgba(180,79,64,0.18)] bg-[rgba(180,79,64,0.08)] px-4 py-3 text-sm text-[var(--danger)]">
-          {error}
-        </div>
-      ) : null}
-
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        items={[
-          { value: 'profile', label: 'Профиль', badge: <Badge tone="brand">Организация</Badge> },
-          { value: 'team', label: 'Команда', badge: <Badge tone="neutral">{users.length}</Badge> },
-          { value: 'references', label: 'Справочники', badge: <Badge tone="accent">{references.length}</Badge> },
-        ]}
-      />
-
-      {tab === 'profile' ? (
-        access.canManageOrganization ? (
-          <SectionCard title="Профиль организации" description="Юридические данные организации, которые используются в карточках договоров и административных отчётах." action={<Button onClick={() => saveOrganizationMutation.mutate()} busy={saveOrganizationMutation.isPending}>Сохранить профиль</Button>}>
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Название">
-                <Input value={organizationForm.name} onChange={(event) => setOrganizationForm((current) => ({ ...current, name: event.target.value }))} />
-              </Field>
-              <Field label="Юридическое название">
-                <Input value={organizationForm.legal_name} onChange={(event) => setOrganizationForm((current) => ({ ...current, legal_name: event.target.value }))} />
-              </Field>
-              <Field label="ИНН">
-                <Input value={organizationForm.inn} onChange={(event) => setOrganizationForm((current) => ({ ...current, inn: event.target.value }))} />
-              </Field>
-              <Field label="КПП">
-                <Input value={organizationForm.kpp} onChange={(event) => setOrganizationForm((current) => ({ ...current, kpp: event.target.value }))} />
-              </Field>
-              <Field label="ОГРН">
-                <Input value={organizationForm.ogrn} onChange={(event) => setOrganizationForm((current) => ({ ...current, ogrn: event.target.value }))} />
-              </Field>
-              <Field label="Статус">
-                <Select value={String(organizationForm.is_active)} onChange={(event) => setOrganizationForm((current) => ({ ...current, is_active: event.target.value === 'true' }))}>
-                  <option value="true">Активна</option>
-                  <option value="false">Отключена</option>
-                </Select>
-              </Field>
-              <div className="md:col-span-2">
-                <Field label="Адрес">
-                  <Textarea value={organizationForm.address} onChange={(event) => setOrganizationForm((current) => ({ ...current, address: event.target.value }))} />
-                </Field>
-              </div>
-            </div>
-          </SectionCard>
-        ) : (
-          <SectionCard title="Профиль организации" description="У Вас открыт режим просмотра. Ниже показаны актуальные сведения по компании без возможности их изменить.">
-            <div className="grid gap-4 md:grid-cols-2">
-              <ReadonlyField label="Название" value={organization.name || ''} />
-              <ReadonlyField label="Юридическое название" value={organization.legal_name || ''} />
-              <ReadonlyField label="ИНН" value={organization.inn || ''} />
-              <ReadonlyField label="КПП" value={organization.kpp || ''} />
-              <ReadonlyField label="ОГРН" value={organization.ogrn || ''} />
-              <ReadonlyField label="Статус" value={organization.is_active ? 'Активна' : 'Отключена'} />
-              <div className="md:col-span-2">
-                <ReadonlyField label="Адрес" value={organization.address || ''} />
-              </div>
-            </div>
-          </SectionCard>
-        )
-      ) : null}
-
-      {tab === 'team' ? (
-        <SectionCard title="Команда и права доступа" description={access.canManageUsers ? 'Для каждого сотрудника доступны роль, состояние учётной записи и базовые контактные данные.' : 'У Вас открыт режим просмотра. Здесь можно ознакомиться с составом команды и назначенными ролями.'}>
-          {users.length ? (
-            <div className="space-y-3">
-              {users.map((user) => (
-                <div key={user.id} className="grid gap-4 rounded-[1.6rem] border border-[var(--line)] bg-white/75 p-4 lg:grid-cols-[1fr_0.8fr_0.8fr_auto] lg:items-center">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold text-[var(--foreground)]">{user.full_name || user.username}</p>
-                      <Badge tone={user.is_active === false ? 'neutral' : 'success'}>
-                        {user.is_active === false ? 'Отключён' : 'Активен'}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                      {user.email || 'Без email'} • {user.position || 'Должность не указана'}
-                    </p>
-                  </div>
-
-                  {access.canManageUsers ? (
-                    <>
-                      <Field label="Роль">
-                        <Select value={roleDrafts[user.id] ?? user.role} onChange={(event) => setRoleDrafts((current) => ({ ...current, [user.id]: event.target.value }))}>
-                          {roleOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </Select>
-                      </Field>
-                      <Field label="Учётная запись">
-                        <Select value={String(user.is_active !== false)} onChange={(event) => changeActivityMutation.mutate({ userId: user.id, isActive: event.target.value === 'true' })}>
-                          <option value="true">Активна</option>
-                          <option value="false">Отключена</option>
-                        </Select>
-                      </Field>
-                      <div className="self-end lg:self-auto">
-                        <Button
-                          variant="secondary"
-                          onClick={() => changeRoleMutation.mutate({ userId: user.id, role: roleDrafts[user.id] ?? user.role })}
-                          busy={changeRoleMutation.isPending}
-                        >
-                          Сохранить роль
-                        </Button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div>
-                        <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">Роль</p>
-                        <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">{roleOptions.find((item) => item.value === user.role)?.label || user.role}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">Учётная запись</p>
-                        <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">{user.is_active === false ? 'Отключена' : 'Активна'}</p>
-                      </div>
-                      <div className="self-end lg:self-auto">
-                        <Badge tone="neutral">Только просмотр</Badge>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              title="Пользователи пока не созданы"
-              description="После добавления первого пользователя здесь будет доступен состав команды и назначенные роли."
-              action={access.canManageUsers ? <Button onClick={() => setIsInviteOpen(true)}>Добавить пользователя</Button> : undefined}
-            />
-          )}
-        </SectionCard>
-      ) : null}
-
-      {tab === 'references' ? (
-        <div className="space-y-6">
-          <SectionCard title="Валюты и курсы" description={access.canManageReferences ? 'Справочник валют используется в карточках договоров и отчётах.' : 'У Вас открыт режим просмотра. Здесь можно увидеть актуальные валюты и курсы, которые применяются в системе.'} action={access.canManageReferences ? <Button onClick={() => openReferenceCreate('currency')}><Plus className="h-4 w-4" />Добавить валюту</Button> : undefined}>
-            {groupedReferences.currency.length ? renderReferenceList(groupedReferences.currency, 'currency') : (
-              <EmptyState title="Справочник валют пуст" description="После добавления валют здесь будут доступны коды и курсы для договоров и финансовых отчётов." />
-            )}
-          </SectionCard>
-
-          <SectionCard title="Статусы договоров" description={access.canManageReferences ? 'Справочник статусов отражает допустимые состояния жизненного цикла договора.' : 'У Вас открыт режим просмотра. Здесь можно увидеть, какие статусы предусмотрены для карточек договоров.'} action={access.canManageReferences ? <Button onClick={() => openReferenceCreate('contract_status')}><Plus className="h-4 w-4" />Добавить статус</Button> : undefined}>
-            {groupedReferences.contract_status.length ? renderReferenceList(groupedReferences.contract_status, 'contract_status') : (
-              <EmptyState title="Статусы договоров пока не созданы" description="После заполнения справочника здесь появятся рабочие статусы жизненного цикла договора." />
-            )}
-          </SectionCard>
-        </div>
-      ) : null}
-
-      {access.canManageUsers ? (
-        <Modal
-          open={isInviteOpen}
-          onClose={() => {
-            setIsInviteOpen(false);
-            setInviteForm(emptyInvite);
-          }}
-          title="Новый пользователь"
-          description="Создание участника команды в рамках текущей организации."
-          size="xl"
-        >
-          <div className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Логин">
-                <Input value={inviteForm.username} onChange={(event) => setInviteForm((current) => ({ ...current, username: event.target.value }))} />
-              </Field>
-              <Field label="Email">
-                <Input type="email" value={inviteForm.email} onChange={(event) => setInviteForm((current) => ({ ...current, email: event.target.value }))} />
-              </Field>
-              <Field label="Пароль">
-                <Input type="password" value={inviteForm.password} onChange={(event) => setInviteForm((current) => ({ ...current, password: event.target.value }))} />
-              </Field>
-              <Field label="Роль">
-                <Select value={inviteForm.role} onChange={(event) => setInviteForm((current) => ({ ...current, role: event.target.value }))}>
-                  {roleOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Имя">
-                <Input value={inviteForm.first_name} onChange={(event) => setInviteForm((current) => ({ ...current, first_name: event.target.value }))} />
-              </Field>
-              <Field label="Фамилия">
-                <Input value={inviteForm.last_name} onChange={(event) => setInviteForm((current) => ({ ...current, last_name: event.target.value }))} />
-              </Field>
-              <Field label="Отчество">
-                <Input value={inviteForm.patronymic} onChange={(event) => setInviteForm((current) => ({ ...current, patronymic: event.target.value }))} />
-              </Field>
-              <Field label="Телефон">
-                <Input value={inviteForm.phone} onChange={(event) => setInviteForm((current) => ({ ...current, phone: event.target.value }))} />
-              </Field>
-              <Field label="Должность">
-                <Input value={inviteForm.position} onChange={(event) => setInviteForm((current) => ({ ...current, position: event.target.value }))} />
-              </Field>
-            </div>
-
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => {
-                setIsInviteOpen(false);
-                setInviteForm(emptyInvite);
-              }}>
-                Отмена
-              </Button>
-              <Button onClick={() => inviteMutation.mutate()} busy={inviteMutation.isPending}>
-                Создать пользователя
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      ) : null}
-
-      {access.canManageReferences ? (
-        <Modal
-          open={isReferenceOpen}
-          onClose={() => {
-            setIsReferenceOpen(false);
-            setReferenceForm(emptyReference);
-          }}
-          title={referenceForm.id ? 'Редактирование элемента НСИ' : 'Новый элемент НСИ'}
-          description="В этой форме можно создать или изменить запись нормативно-справочной информации."
-          size="lg"
-        >
-          <div className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Категория">
-                <Select value={referenceForm.category} onChange={(event) => setReferenceForm((current) => ({ ...current, category: event.target.value }))}>
-                  <option value="currency">Валюты</option>
-                  <option value="contract_status">Статусы договоров</option>
-                </Select>
-              </Field>
-              <Field label="Код">
-                <Input value={referenceForm.code} onChange={(event) => setReferenceForm((current) => ({ ...current, code: event.target.value }))} />
-              </Field>
-              <Field label="Наименование">
-                <Input value={referenceForm.label} onChange={(event) => setReferenceForm((current) => ({ ...current, label: event.target.value }))} />
-              </Field>
-              <Field label="Порядок">
-                <Input type="number" value={referenceForm.sort_order} onChange={(event) => setReferenceForm((current) => ({ ...current, sort_order: event.target.value }))} />
-              </Field>
-              {referenceForm.category === 'currency' ? (
-                <Field label="Курс">
-                  <Input type="number" value={referenceForm.metadata_rate} onChange={(event) => setReferenceForm((current) => ({ ...current, metadata_rate: event.target.value }))} />
-                </Field>
-              ) : null}
-              <Field label="Статус">
-                <Select value={String(referenceForm.is_active)} onChange={(event) => setReferenceForm((current) => ({ ...current, is_active: event.target.value === 'true' }))}>
-                  <option value="true">Активен</option>
-                  <option value="false">Отключён</option>
-                </Select>
-              </Field>
-              <div className="md:col-span-2">
-                <Field label="Описание">
-                  <Textarea value={referenceForm.description} onChange={(event) => setReferenceForm((current) => ({ ...current, description: event.target.value }))} />
-                </Field>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => {
-                setIsReferenceOpen(false);
-                setReferenceForm(emptyReference);
-              }}>
-                Отмена
-              </Button>
-              <Button onClick={() => saveReferenceMutation.mutate()} busy={saveReferenceMutation.isPending}>
-                Сохранить элемент
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      ) : null}
-    </div>
-  );
-}
 
 export default function OrganizationPage() {
+  const queryClient = useQueryClient();
   const permissions = useAuthStore((state) => state.permissions);
+  const currentUser = useAuthStore((state) => state.user);
+
+  const [error, setError] = useState('');
+  const [organizationForm, setOrganizationForm] = useState<Partial<Organization>>({});
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRoleId, setInviteRoleId] = useState<number | null>(null);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleCode, setNewRoleCode] = useState('');
+  const [editingRoleId, setEditingRoleId] = useState<number | null>(null);
+  const [editingPermissions, setEditingPermissions] = useState<Record<string, boolean>>(createPermissionDraft());
+  const [isRouteModalOpen, setIsRouteModalOpen] = useState(false);
+  const [editingRoute, setEditingRoute] = useState<ApprovalRoute | null>(null);
+  const [routeError, setRouteError] = useState('');
+  const [routeStepIndex, setRouteStepIndex] = useState(0);
+  const [routeForm, setRouteForm] = useState<RouteWizardFormState>(initialRouteForm);
 
   const { data: organizationPayload } = useQuery<PaginatedResponse<Organization>>({
     queryKey: ['organization'],
@@ -584,32 +107,556 @@ export default function OrganizationPage() {
     queryFn: () => apiClient.get('/users/').then((response) => response.data),
   });
 
-  const { data: referencesPayload } = useQuery<PaginatedResponse<ReferenceEntry>>({
-    queryKey: ['organization', 'references'],
-    queryFn: () => apiClient.get('/reference-entries/').then((response) => response.data),
+  const { data: rolesPayload } = useQuery<PaginatedResponse<RoleDefinition> | RoleDefinition[]>({
+    queryKey: ['organization', 'roles'],
+    queryFn: () => apiClient.get('/roles/').then((response) => response.data),
+  });
+
+  const { data: invitationsPayload } = useQuery<PaginatedResponse<Invitation>>({
+    queryKey: ['organization', 'invitations'],
+    queryFn: () => apiClient.get('/invitations/').then((response) => response.data),
+    enabled: Boolean(permissions?.can_manage_users),
+  });
+  const { data: routesPayload } = useQuery<PaginatedResponse<ApprovalRoute>>({
+    queryKey: ['organization', 'approval-routes'],
+    queryFn: () => apiClient.get('/approval-routes/').then((response) => response.data),
+    enabled: Boolean(permissions?.can_manage_approval_routes || permissions?.can_view_approvals),
   });
 
   const organization = getResults(organizationPayload)[0];
   const users = getResults(usersPayload);
-  const references = getResults(referencesPayload);
+  const roles = getResults(rolesPayload);
+  const assignableRoles = useMemo(() => roles.filter((role) => role.code !== 'super_admin'), [roles]);
+  const invitations = getResults(invitationsPayload);
+  const routes = getResults(routesPayload);
+
+  useEffect(() => {
+    if (!organization) return;
+    setOrganizationForm({
+      name: organization.name,
+      legal_name: organization.legal_name,
+      inn: organization.inn,
+      kpp: organization.kpp,
+      ogrn: organization.ogrn,
+      address: organization.address,
+      is_active: organization.is_active,
+    });
+  }, [organization]);
+
+  useEffect(() => {
+    if (roles.length && inviteRoleId === null) {
+      const defaultRole = assignableRoles.find((role) => role.code === 'user') || assignableRoles[0];
+      if (defaultRole) {
+        setInviteRoleId(defaultRole.id);
+      }
+    }
+  }, [assignableRoles, roles.length, inviteRoleId]);
+
+  const roleMap = useMemo(() => {
+    return roles.reduce<Record<number, RoleDefinition>>((acc, role) => {
+      acc[role.id] = role;
+      return acc;
+    }, {});
+  }, [roles]);
+  const editingRole = editingRoleId ? roleMap[editingRoleId] : undefined;
+  const editingRoleIsProtected = Boolean(editingRole && protectedRoleCodes.has(editingRole.code));
+
+  const saveOrganizationMutation = useMutation({
+    mutationFn: () => apiClient.patch(`/organizations/${organization?.id}/`, organizationForm),
+    onSuccess: async () => {
+      setError('');
+      await queryClient.invalidateQueries({ queryKey: ['organization'] });
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'stats'] });
+    },
+    onError: () => setError('Не удалось сохранить организацию.'),
+  });
+
+  const inviteMutation = useMutation({
+    mutationFn: () => apiClient.post('/invitations/', { email: inviteEmail, role_id: inviteRoleId }),
+    onSuccess: async () => {
+      setInviteEmail('');
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'invitations'] });
+    },
+    onError: () => setError('Не удалось отправить приглашение.'),
+  });
+
+  const changeRoleMutation = useMutation({
+    mutationFn: ({ userId, roleId }: { userId: number; roleId: number }) => apiClient.post(`/users/${userId}/change_role/`, { role_id: roleId }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'users'] });
+    },
+    onError: () => setError('Не удалось назначить роль пользователю.'),
+  });
+
+  const setUserActiveMutation = useMutation({
+    mutationFn: ({ userId, isActive }: { userId: number; isActive: boolean }) => apiClient.post(`/users/${userId}/set_active/`, { is_active: isActive }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'users'] });
+    },
+    onError: () => setError('Не удалось изменить статус пользователя.'),
+  });
+
+  const createRoleMutation = useMutation({
+    mutationFn: () => apiClient.post('/roles/', {
+      name: newRoleName,
+      code: newRoleCode || undefined,
+      permissions: createPermissionDraft(),
+    }),
+    onSuccess: async () => {
+      setNewRoleName('');
+      setNewRoleCode('');
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'roles'] });
+    },
+    onError: () => setError('Не удалось создать роль.'),
+  });
+
+  const updateRoleMutation = useMutation({
+    mutationFn: ({ roleId, payload }: { roleId: number; payload: Partial<RoleDefinition> }) => apiClient.patch(`/roles/${roleId}/`, payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'roles'] });
+      setEditingRoleId(null);
+    },
+    onError: () => setError('Не удалось обновить роль.'),
+  });
+
+  const deleteRoleMutation = useMutation({
+    mutationFn: (roleId: number) => apiClient.delete(`/roles/${roleId}/`),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'roles'] });
+    },
+    onError: () => setError('Не удалось удалить роль.'),
+  });
+
+  const routeSteps = [
+    { key: 'main', label: 'Основное' },
+    { key: 'stages', label: 'Этапы' },
+    { key: 'review', label: 'Проверка' },
+  ] as const;
+  const activeRouteStep = routeSteps[routeStepIndex];
+
+  const openCreateRoute = () => {
+    setEditingRoute(null);
+    setRouteForm(initialRouteForm);
+    setRouteError('');
+    setRouteStepIndex(0);
+    setIsRouteModalOpen(true);
+  };
+  const openEditRoute = (route: ApprovalRoute) => {
+    setEditingRoute(route);
+    setRouteForm({
+      name: route.name,
+      is_active: route.is_active,
+      stages: (route.stages || []).length
+        ? route.stages.map((stage, idx) => ({
+          name: stage.name || `Этап ${idx + 1}`,
+          role: stage.role || '',
+          assigned_to: stage.assigned_to || null,
+          order: stage.order || idx + 1,
+        }))
+        : initialRouteForm.stages,
+    });
+    setRouteError('');
+    setRouteStepIndex(0);
+    setIsRouteModalOpen(true);
+  };
+  const closeRouteModal = () => {
+    setEditingRoute(null);
+    setRouteForm(initialRouteForm);
+    setRouteError('');
+    setRouteStepIndex(0);
+    setIsRouteModalOpen(false);
+  };
+  const routeMainValid = routeForm.name.trim().length > 0;
+  const routeStagesValid = routeForm.stages.length > 0
+    && routeForm.stages.every((stage) => stage.name.trim() && stage.assigned_to);
+
+  const saveRouteMutation = useMutation({
+    mutationFn: () => {
+      const payload = {
+        name: routeForm.name,
+        is_active: routeForm.is_active,
+        stages: routeForm.stages
+          .slice()
+          .sort((a, b) => a.order - b.order)
+          .map((stage, index) => ({
+            name: stage.name,
+            role: stage.role || '',
+            assigned_to: stage.assigned_to,
+            order: Number(stage.order || index + 1),
+          })),
+      };
+      return editingRoute
+        ? apiClient.patch(`/approval-routes/${editingRoute.id}/`, payload)
+        : apiClient.post('/approval-routes/', payload);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'approval-routes'] });
+      await queryClient.invalidateQueries({ queryKey: ['approval-routes'] });
+      closeRouteModal();
+    },
+    onError: () => setRouteError('Не удалось сохранить маршрут. Проверьте заполнение шагов.'),
+  });
+
+  const deleteRouteMutation = useMutation({
+    mutationFn: (routeId: number) => apiClient.delete(`/approval-routes/${routeId}/`),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['organization', 'approval-routes'] });
+      await queryClient.invalidateQueries({ queryKey: ['approval-routes'] });
+      closeRouteModal();
+    },
+    onError: () => setRouteError('Не удалось удалить маршрут.'),
+  });
 
   if (!organization) {
-    return <LoadingBlock label="Загружаем профиль организации..." />;
+    return <LoadingBlock label="Загружаем организацию..." />;
   }
 
   return (
-    <OrganizationContent
-      key={organization.id}
-      organization={organization}
-      users={users}
-      stats={stats}
-      references={references}
-      access={{
-        canManageOrganization: Boolean(permissions?.can_manage_organization),
-        canManageUsers: Boolean(permissions?.can_manage_users),
-        canManageReferences: Boolean(permissions?.can_manage_references),
-      }}
-    />
+    <div className="space-y-6">
+      <PageIntro eyebrow="Организация" title="Команда, приглашения и роли" />
+
+      {error ? (
+        <div className="rounded-2xl border border-[rgba(180,79,64,0.18)] bg-[rgba(180,79,64,0.08)] px-4 py-3 text-sm text-[var(--danger)]">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard label="Пользователи" value={formatNumber(stats?.members_count)} tone="brand" />
+        <StatCard label="Договоры" value={formatNumber(stats?.contracts_count)} tone="accent" />
+        <StatCard label="Контрагенты" value={formatNumber(stats?.contractors_count)} tone="neutral" />
+      </div>
+
+      <SectionCard
+        title="Профиль организации"
+        action={permissions?.can_manage_organization ? (
+          <Button busy={saveOrganizationMutation.isPending} onClick={() => saveOrganizationMutation.mutate()}>
+            Сохранить
+          </Button>
+        ) : undefined}
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Название"><Input value={organizationForm.name || ''} onChange={(event) => setOrganizationForm((prev) => ({ ...prev, name: event.target.value }))} disabled={!permissions?.can_manage_organization} /></Field>
+          <Field label="Юридическое название"><Input value={organizationForm.legal_name || ''} onChange={(event) => setOrganizationForm((prev) => ({ ...prev, legal_name: event.target.value }))} disabled={!permissions?.can_manage_organization} /></Field>
+          <Field label="ИНН"><Input value={organizationForm.inn || ''} onChange={(event) => setOrganizationForm((prev) => ({ ...prev, inn: event.target.value }))} disabled={!permissions?.can_manage_organization} /></Field>
+          <Field label="КПП"><Input value={organizationForm.kpp || ''} onChange={(event) => setOrganizationForm((prev) => ({ ...prev, kpp: event.target.value }))} disabled={!permissions?.can_manage_organization} /></Field>
+          <Field label="ОГРН"><Input value={organizationForm.ogrn || ''} onChange={(event) => setOrganizationForm((prev) => ({ ...prev, ogrn: event.target.value }))} disabled={!permissions?.can_manage_organization} /></Field>
+          <Field label="Статус">
+            <Select
+              value={String(organizationForm.is_active ?? true)}
+              onChange={(event) => setOrganizationForm((prev) => ({ ...prev, is_active: event.target.value === 'true' }))}
+              disabled={!permissions?.can_manage_organization}
+            >
+              <option value="true">Активна</option>
+              <option value="false">Отключена</option>
+            </Select>
+          </Field>
+          <div className="md:col-span-2">
+            <Field label="Адрес">
+              <Textarea value={organizationForm.address || ''} onChange={(event) => setOrganizationForm((prev) => ({ ...prev, address: event.target.value }))} disabled={!permissions?.can_manage_organization} />
+            </Field>
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Команда">
+        {users.length ? (
+          <div className="space-y-3">
+            {users.map((user) => {
+              const selectedRoleId = user.org_role_id || roles.find((role) => role.code === user.org_role)?.id || 0;
+              const isCurrentUser = currentUser?.id === user.id;
+              const isUserSuperAdmin = user.org_role === 'super_admin' || user.role === 'super_admin';
+              const isCurrentUserSuperAdmin = isCurrentUser && isUserSuperAdmin;
+              return (
+                <div key={user.id} className="grid gap-4 rounded-2xl border border-[var(--line)] bg-white/80 p-4 md:grid-cols-[1fr_18rem_14rem] md:items-end">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-[var(--foreground)]">{user.full_name || user.username}</p>
+                      {isCurrentUser ? <Badge tone="brand">Вы</Badge> : null}
+                      {isCurrentUserSuperAdmin ? <Badge tone="neutral">Самозащита включена</Badge> : null}
+                    </div>
+                    <p className="text-xs text-[var(--muted-foreground)]">{user.email || 'Без email'}</p>
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">Текущая роль: {user.org_role_name || user.org_role || user.role}</p>
+                    {isCurrentUserSuperAdmin ? (
+                      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                        Главный админ не может удалить, деактивировать или разжаловать самого себя.
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <Field label="Роль в организации">
+                    <Select
+                      value={String(selectedRoleId || '')}
+                      disabled={!permissions?.can_manage_users || isCurrentUserSuperAdmin || isUserSuperAdmin}
+                      onChange={(event) => changeRoleMutation.mutate({ userId: user.id, roleId: Number(event.target.value) })}
+                    >
+                      {assignableRoles.map((role) => (
+                        <option key={role.id} value={role.id}>{role.name}</option>
+                      ))}
+                    </Select>
+                  </Field>
+
+                  <Field label="Учётная запись">
+                    <Select
+                      value={String(user.is_active !== false)}
+                      disabled={!permissions?.can_manage_users || isCurrentUserSuperAdmin || isUserSuperAdmin}
+                      onChange={(event) => setUserActiveMutation.mutate({ userId: user.id, isActive: event.target.value === 'true' })}
+                    >
+                      <option value="true">Активна</option>
+                      <option value="false">Отключена</option>
+                    </Select>
+                  </Field>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <EmptyState title="Пользователей пока нет" />
+        )}
+      </SectionCard>
+
+      {permissions?.can_manage_users ? (
+        <SectionCard title="Приглашение пользователя" action={<Badge tone="accent">Роль по умолчанию: Пользователь</Badge>}>
+          <div className="grid gap-4 md:grid-cols-[1fr_18rem_auto] md:items-end">
+            <Field label="Email пользователя">
+              <Input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="name@example.com" />
+            </Field>
+            <Field label="Роль в организации">
+              <Select value={String(inviteRoleId || '')} onChange={(event) => setInviteRoleId(Number(event.target.value))}>
+                {assignableRoles.map((role) => (
+                  <option key={role.id} value={role.id}>{role.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Button busy={inviteMutation.isPending} onClick={() => inviteMutation.mutate()}>
+              Отправить приглашение
+            </Button>
+          </div>
+
+          {invitations.length ? (
+            <div className="mt-6 space-y-2">
+              {invitations.map((invitation) => (
+                <div key={invitation.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white/75 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-[var(--foreground)]">{invitation.email}</p>
+                    <p className="text-xs text-[var(--muted-foreground)]">Роль: {invitation.role_name} • Статус: {invitation.status}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </SectionCard>
+      ) : null}
+
+      {(permissions?.can_manage_approval_routes || permissions?.can_view_approvals) ? (
+        <SectionCard
+          title="Маршруты согласования"
+          description="Маршруты создаются на уровне текущей организации и доступны только её участникам."
+          action={permissions?.can_manage_approval_routes ? <Button onClick={openCreateRoute}>Новый маршрут</Button> : undefined}
+        >
+          {routes.length ? (
+            <div className="grid gap-4 xl:grid-cols-2">
+              {routes.map((route) => (
+                <button
+                  key={route.id}
+                  type="button"
+                  onClick={() => permissions?.can_manage_approval_routes && openEditRoute(route)}
+                  className="rounded-2xl border border-[var(--line)] bg-white/75 p-4 text-left"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={route.is_active ? 'success' : 'neutral'}>{route.is_active ? 'Активен' : 'Отключен'}</Badge>
+                    <Badge tone="neutral">{route.stages?.length || 0} этапа</Badge>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold text-[var(--foreground)]">{route.name}</p>
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    {(route.stages || []).map((s) => `${s.order}. ${s.name} (${s.assigned_to_name || roleLabels[s.role] || s.role || 'исполнитель'})`).join(' -> ')}
+                  </p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="Маршрутов пока нет" description="Создайте первый маршрут согласования для этой организации." />
+          )}
+        </SectionCard>
+      ) : null}
+
+      {permissions?.can_manage_users ? (
+        <SectionCard title="Роли и матрица доступа">
+          <div className="grid gap-6 lg:grid-cols-[22rem_1fr]">
+            <div className="space-y-4 rounded-2xl border border-[var(--line)] bg-white/75 p-4">
+              <Field label="Название роли">
+                <Input value={newRoleName} onChange={(event) => setNewRoleName(event.target.value)} placeholder="Например, Юрист" />
+              </Field>
+              <Field label="Код роли (опционально)">
+                <Input value={newRoleCode} onChange={(event) => setNewRoleCode(event.target.value)} placeholder="lawyer" />
+              </Field>
+              <Button busy={createRoleMutation.isPending} onClick={() => createRoleMutation.mutate()}>
+                Создать роль
+              </Button>
+
+              <div className="space-y-2 pt-2">
+                {roles.map((role) => (
+                  <button
+                    key={role.id}
+                    type="button"
+                    onClick={() => {
+                      setEditingRoleId(role.id);
+                      setEditingPermissions(createPermissionDraft(role.permissions));
+                    }}
+                    className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition ${editingRoleId === role.id ? 'border-[var(--brand)] bg-[rgba(31,77,61,0.08)]' : 'border-[var(--line)] bg-white/70 hover:bg-white'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-[var(--foreground)]">{role.name}</span>
+                      {protectedRoleCodes.has(role.code) ? <Badge tone="neutral">Защищённая</Badge> : null}
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">{role.code}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-[var(--line)] bg-white/75 p-4">
+              {editingRoleId ? (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-[var(--foreground)]">
+                      Редактирование роли: {editingRole?.name}
+                    </p>
+                    <div className="flex gap-2">
+                      {!editingRoleIsProtected ? (
+                        <Button variant="danger" busy={deleteRoleMutation.isPending} onClick={() => deleteRoleMutation.mutate(editingRoleId)}>
+                          Удалить роль
+                        </Button>
+                      ) : null}
+                      <Button
+                        disabled={editingRoleIsProtected}
+                        busy={updateRoleMutation.isPending}
+                        onClick={() => updateRoleMutation.mutate({ roleId: editingRoleId, payload: { permissions: editingPermissions } })}
+                      >
+                        Сохранить матрицу
+                      </Button>
+                    </div>
+                  </div>
+                  {editingRoleIsProtected ? (
+                    <div className="rounded-xl border border-[var(--line)] bg-white/80 px-4 py-3 text-sm text-[var(--muted-foreground)]">
+                      Роли "Пользователь" и "Главный админ" защищены: их нельзя редактировать или удалять.
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {permissionKeys.map((key) => (
+                      <Checkbox
+                        key={key}
+                        label={permissionLabels[key] || key}
+                        checked={Boolean(editingPermissions[key])}
+                        onChange={(checked) => {
+                          if (editingRoleIsProtected) return;
+                          setEditingPermissions((prev) => ({ ...prev, [key]: checked }));
+                        }}
+                        description={editingRoleIsProtected ? 'Для этой роли изменение недоступно.' : undefined}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <EmptyState title="Выберите роль слева, чтобы редактировать матрицу прав" />
+              )}
+            </div>
+          </div>
+        </SectionCard>
+      ) : null}
+
+      <Modal
+        open={isRouteModalOpen}
+        onClose={closeRouteModal}
+        title={editingRoute ? 'Редактирование маршрута согласования' : 'Новый маршрут согласования'}
+        description="Настройте шаги маршрута. Можно выбрать роль и конкретного сотрудника."
+        size="xl"
+      >
+        <div className="space-y-4">
+          {routeError ? <div className="rounded-2xl border border-[rgba(180,79,64,0.18)] bg-[rgba(180,79,64,0.08)] px-4 py-3 text-sm text-[var(--danger)]">{routeError}</div> : null}
+          <div className="flex flex-wrap gap-2">
+            {routeSteps.map((step, idx) => (
+              <button key={step.key} type="button" onClick={() => setRouteStepIndex(idx)} className={`rounded-full border px-3 py-1.5 text-xs ${idx === routeStepIndex ? 'border-[var(--brand)] bg-[rgba(31,77,61,0.08)] text-[var(--brand)]' : 'border-[var(--line)] bg-white text-[var(--muted-foreground)]'}`}>
+                {idx + 1}. {step.label}
+              </button>
+            ))}
+          </div>
+
+          {activeRouteStep.key === 'main' ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Название маршрута"><Input value={routeForm.name} onChange={(event) => setRouteForm((prev) => ({ ...prev, name: event.target.value }))} /></Field>
+              <Field label="Статус">
+                <Select value={String(routeForm.is_active)} onChange={(event) => setRouteForm((prev) => ({ ...prev, is_active: event.target.value === 'true' }))}>
+                  <option value="true">Активен</option>
+                  <option value="false">Отключен</option>
+                </Select>
+              </Field>
+            </div>
+          ) : null}
+
+          {activeRouteStep.key === 'stages' ? (
+            <div className="space-y-3">
+              {routeForm.stages.map((stage, index) => {
+                const usersForRole = stage.role
+                  ? users.filter((u) => (u.org_role || u.role) === stage.role && u.is_active !== false)
+                  : users.filter((u) => u.is_active !== false);
+                return (
+                  <div key={`${index}-${stage.order}`} className="grid gap-3 rounded-2xl border border-[var(--line)] bg-white/75 p-3 md:grid-cols-[0.2fr_0.8fr_0.8fr_0.9fr_auto]">
+                    <Field label="Порядок"><Input type="number" value={stage.order} onChange={(event) => setRouteForm((prev) => ({ ...prev, stages: prev.stages.map((s, i) => i === index ? { ...s, order: Number(event.target.value || s.order) } : s) }))} /></Field>
+                    <Field label="Название"><Input value={stage.name} onChange={(event) => setRouteForm((prev) => ({ ...prev, stages: prev.stages.map((s, i) => i === index ? { ...s, name: event.target.value } : s) }))} /></Field>
+                    <Field label="Роль">
+                      <Select value={stage.role || ''} onChange={(event) => setRouteForm((prev) => ({ ...prev, stages: prev.stages.map((s, i) => i === index ? { ...s, role: event.target.value, assigned_to: null } : s) }))}>
+                        <option value="">Не выбрана (вся команда)</option>
+                        {roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </Select>
+                    </Field>
+                    <Field label="Сотрудник">
+                      <Select value={String(stage.assigned_to || '')} onChange={(event) => setRouteForm((prev) => ({ ...prev, stages: prev.stages.map((s, i) => i === index ? { ...s, assigned_to: Number(event.target.value) || null } : s) }))}>
+                        <option value="">Выберите сотрудника</option>
+                        {usersForRole.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.username}</option>)}
+                      </Select>
+                    </Field>
+                    <div className="self-end">{routeForm.stages.length > 1 ? <Button variant="ghost" onClick={() => setRouteForm((prev) => ({ ...prev, stages: prev.stages.filter((_, i) => i !== index) }))}>Убрать</Button> : null}</div>
+                  </div>
+                );
+              })}
+              <Button variant="secondary" onClick={() => setRouteForm((prev) => ({ ...prev, stages: [...prev.stages, { name: 'Новый этап', role: '', assigned_to: null, order: prev.stages.length + 1 }] }))}>Добавить этап</Button>
+            </div>
+          ) : null}
+
+          {activeRouteStep.key === 'review' ? (
+            <div className="rounded-2xl border border-[var(--line)] bg-white/70 p-4 text-sm text-[var(--muted-foreground)]">
+              <p><strong className="text-[var(--foreground)]">Маршрут:</strong> {routeForm.name || 'Не заполнено'}</p>
+              <p className="mt-2"><strong className="text-[var(--foreground)]">Шаги:</strong></p>
+              <div className="mt-1 space-y-1">
+                {routeForm.stages.slice().sort((a, b) => a.order - b.order).map((stage) => {
+                  const assigned = users.find((u) => u.id === stage.assigned_to);
+                  return <p key={`${stage.order}-${stage.name}`}>{stage.order}. {stage.name} - {stage.role ? (roleLabels[stage.role] || stage.role) : 'Любая роль'} - {assigned?.full_name || assigned?.username || 'Не выбран'}</p>;
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap justify-between gap-3">
+            <div>{editingRoute ? <Button variant="danger" onClick={() => deleteRouteMutation.mutate(editingRoute.id)} busy={deleteRouteMutation.isPending}>Удалить</Button> : null}</div>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="secondary" onClick={closeRouteModal}>Отмена</Button>
+              {routeStepIndex > 0 ? <Button variant="secondary" onClick={() => setRouteStepIndex((s) => s - 1)}>Назад</Button> : null}
+              {routeStepIndex < routeSteps.length - 1 ? (
+                <Button
+                  onClick={() => setRouteStepIndex((s) => s + 1)}
+                  disabled={(activeRouteStep.key === 'main' && !routeMainValid) || (activeRouteStep.key === 'stages' && !routeStagesValid)}
+                >
+                  Далее
+                </Button>
+              ) : (
+                <Button onClick={() => saveRouteMutation.mutate()} busy={saveRouteMutation.isPending} disabled={!routeMainValid || !routeStagesValid}>Сохранить маршрут</Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </Modal>
+    </div>
   );
 }
-

@@ -1,6 +1,6 @@
 ﻿import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { GitBranchPlus, Plus, ShieldCheck, Workflow } from 'lucide-react';
+import { GitBranchPlus, ShieldCheck, Workflow } from 'lucide-react';
 import apiClient from '@/api/client';
 import { useAuthStore } from '@/stores/authStore';
 import { buildStagePreview, formatDate, getResults, summarizeStages } from '@/shared/lib/format';
@@ -9,7 +9,7 @@ import type {
   ApprovalTask,
   PaginatedResponse,
 } from '@/shared/types/domain';
-import { approvalStatusOptions, roleOptions } from '@/shared/types/domain';
+import { approvalStatusOptions, roleLabels, roleOptions } from '@/shared/types/domain';
 import {
   Badge,
   Button,
@@ -27,6 +27,7 @@ import {
 
 type PageTab = 'tasks' | 'routes';
 type ApprovalActionType = 'approve' | 'reject';
+type TaskScope = 'mine' | 'all';
 
 interface RouteFormState {
   name: string;
@@ -64,10 +65,7 @@ export default function ApprovalsPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<PageTab>('tasks');
   const [statusFilter, setStatusFilter] = useState('');
-  const [isRouteModalOpen, setIsRouteModalOpen] = useState(false);
-  const [editingRoute, setEditingRoute] = useState<ApprovalRoute | null>(null);
-  const [routeForm, setRouteForm] = useState<RouteFormState>(initialRoute);
-  const [routeError, setRouteError] = useState('');
+  const [taskScope, setTaskScope] = useState<TaskScope>(canProcessTasks ? 'mine' : 'all');
   const [taskAction, setTaskAction] = useState<{ task: ApprovalTask; action: ApprovalActionType } | null>(null);
   const [taskComment, setTaskComment] = useState('');
 
@@ -85,62 +83,20 @@ export default function ApprovalsPage() {
 
   const tasks = getResults(tasksPayload);
   const routes = getResults(routesPayload);
-
-  const openCreate = () => {
-    setEditingRoute(null);
-    setRouteForm(initialRoute);
-    setRouteError('');
-    setIsRouteModalOpen(true);
-  };
-
-  const openEdit = (route: ApprovalRoute) => {
-    setEditingRoute(route);
-    setRouteForm({
-      name: route.name,
-      is_active: route.is_active,
-      stages: route.stages?.length
-        ? route.stages.map((stage) => ({ name: stage.name, role: stage.role, order: stage.order }))
-        : initialRoute.stages,
-    });
-    setRouteError('');
-    setIsRouteModalOpen(true);
-  };
-
-  const closeRouteModal = () => {
-    setEditingRoute(null);
-    setRouteForm(initialRoute);
-    setRouteError('');
-    setIsRouteModalOpen(false);
-  };
-
-  const saveRouteMutation = useMutation({
-    mutationFn: () => {
-      const payload = {
-        name: routeForm.name,
-        is_active: routeForm.is_active,
-        stages: routeForm.stages
-          .slice()
-          .sort((left, right) => left.order - right.order)
-          .map((stage) => ({ ...stage })),
-      };
-      return editingRoute
-        ? apiClient.patch(`/approval-routes/${editingRoute.id}/`, payload)
-        : apiClient.post('/approval-routes/', payload);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['approval-routes'] });
-      closeRouteModal();
-    },
-    onError: () => setRouteError('Не удалось сохранить маршрут. Проверь название и состав этапов.'),
+  const visibleTasks = tasks.filter((task) => {
+    if (taskScope !== 'mine') {
+      return true;
+    }
+    return Boolean(user?.id && task.assigned_to === user.id);
   });
+  const canActOnTask = (task: ApprovalTask) => Boolean(
+    canProcessTasks
+    && task.status === 'pending'
+    && user?.id
+    && task.assigned_to
+    && task.assigned_to === user.id,
+  );
 
-  const deleteRouteMutation = useMutation({
-    mutationFn: (id: number) => apiClient.delete(`/approval-routes/${id}/`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['approval-routes'] });
-      closeRouteModal();
-    },
-  });
 
   const taskActionMutation = useMutation({
     mutationFn: () => {
@@ -164,11 +120,10 @@ export default function ApprovalsPage() {
         eyebrow="Workflow"
         title="Согласование"
         description="Раздел предназначен для управления маршрутами утверждения и задачами согласования по ролям."
-        actions={canManageRoutes ? <Button onClick={openCreate} className="rounded-2xl px-5 py-3"><Plus className="h-4 w-4" />Новый маршрут</Button> : undefined}
       />
 
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Задачи" value={tasks.length} hint={`${tasks.filter((item) => item.status === 'pending').length} ожидают решения`} tone="brand" icon={<ShieldCheck className="h-5 w-5" />} />
+        <StatCard label="Задачи" value={visibleTasks.length} hint={`${visibleTasks.filter((item) => item.status === 'pending').length} ожидают решения`} tone="brand" icon={<ShieldCheck className="h-5 w-5" />} />
         <StatCard label="Маршруты" value={routes.length} hint={`${routes.filter((item) => item.is_active).length} активных`} tone="accent" icon={<GitBranchPlus className="h-5 w-5" />} />
         <StatCard label="Этапы" value={routes.reduce((sum, item) => sum + (item.stages?.length ?? 0), 0)} hint="Суммарный состав маршрутов" tone="neutral" icon={<Workflow className="h-5 w-5" />} />
       </div>
@@ -177,14 +132,14 @@ export default function ApprovalsPage() {
         value={tab}
         onChange={(value) => setTab(value as PageTab)}
         items={[
-          { value: 'tasks', label: 'Задачи', badge: <Badge tone="accent">{tasks.length}</Badge> },
+          { value: 'tasks', label: 'Задачи', badge: <Badge tone="accent">{visibleTasks.length}</Badge> },
           ...(canManageRoutes ? [{ value: 'routes', label: 'Маршруты', badge: <Badge tone="neutral">{routes.length}</Badge> }] : []),
         ]}
       />
 
       {tab === 'tasks' ? (
         <SectionCard title="Задачи согласования" description="Здесь доступны фильтрация задач и принятие решений по текущим этапам маршрутов.">
-          <div className="mb-4 grid gap-4 md:grid-cols-[0.7fr_1.3fr]">
+          <div className="mb-4 grid gap-4 md:grid-cols-[0.7fr_0.8fr_1.1fr]">
             <Field label="Статус">
               <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="">Все статусы</option>
@@ -193,11 +148,17 @@ export default function ApprovalsPage() {
                 ))}
               </Select>
             </Field>
+            <Field label="Показать">
+              <Select value={taskScope} onChange={(event) => setTaskScope(event.target.value as TaskScope)}>
+                <option value="mine">Мои задачи</option>
+                <option value="all">Все задачи</option>
+              </Select>
+            </Field>
           </div>
 
-          {tasks.length ? (
+          {visibleTasks.length ? (
             <div className="space-y-3">
-              {tasks.map((task) => (
+              {visibleTasks.map((task) => (
                 <div key={task.id} className="rounded-[1.7rem] border border-[var(--line)] bg-white/75 p-5">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
@@ -210,14 +171,14 @@ export default function ApprovalsPage() {
                       </div>
                       <h3 className="mt-3 text-lg font-semibold text-[var(--foreground)]">{task.contract_title || 'Без договора'}</h3>
                       <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-                        {task.assigned_to_name || 'Исполнитель не назначен'} • Роль: {roleOptions.find((item) => item.value === task.role)?.label || task.role}
+                        {task.assigned_to_name || 'Исполнитель не назначен'} • Роль: {roleLabels[task.role] || task.role}
                       </p>
                       <p className="mt-3 text-sm leading-7 text-[var(--muted-foreground)]">
                         {task.comment || 'Комментарий к задаче пока не добавлен.'}
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-3">
-                      {task.status === 'pending' && canProcessTasks ? (
+                      {canActOnTask(task) ? (
                         <>
                           <Button variant="secondary" onClick={() => setTaskAction({ task, action: 'reject' })}>
                             Отклонить
@@ -229,6 +190,10 @@ export default function ApprovalsPage() {
                       ) : task.status === 'waiting' ? (
                         <p className="text-xs text-[var(--muted-foreground)]">
                           Этап будет открыт автоматически после завершения предыдущих согласований.
+                        </p>
+                      ) : task.status === 'pending' && !task.assigned_to ? (
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          Для этого этапа пока не назначен ответственный согласующий.
                         </p>
                       ) : task.status === 'pending' ? (
                         <p className="text-xs text-[var(--muted-foreground)]">
@@ -245,7 +210,7 @@ export default function ApprovalsPage() {
               ))}
             </div>
           ) : (
-            <EmptyState title="Задач не найдено" description="По текущему фильтру задачи не найдены. Измените параметры отбора или создайте маршрут согласования." />
+            <EmptyState title={taskScope === 'mine' ? 'У Вас пока нет назначенных задач' : 'Задач не найдено'} description={taskScope === 'mine' ? 'Как только на Вас будет назначен этап согласования, он появится в этом списке.' : 'По текущему фильтру задачи не найдены. Измените параметры отбора или создайте маршрут согласования.'} />
           )}
         </SectionCard>
       ) : canManageRoutes ? (
@@ -256,7 +221,7 @@ export default function ApprovalsPage() {
                 <button
                   key={route.id}
                   type="button"
-                  onClick={() => openEdit(route)}
+                  onClick={() => {}}
                   className="rounded-[1.8rem] border border-[var(--line)] bg-white/75 p-5 text-left transition hover:border-[var(--line-strong)] hover:bg-white"
                 >
                   <div className="flex flex-wrap items-center gap-2">
@@ -271,118 +236,10 @@ export default function ApprovalsPage() {
               ))}
             </div>
           ) : (
-            <EmptyState title="Маршрутов пока нет" description="После создания первого маршрута здесь будет доступна настройка ролевых шагов для типовых договоров." action={<Button onClick={openCreate}>Создать маршрут</Button>} />
+            <EmptyState title="Маршрутов пока нет" description="Создайте маршрут в разделе «Организация»." />
           )}
         </SectionCard>
       ) : null}
-
-      <Modal
-        open={isRouteModalOpen}
-        onClose={closeRouteModal}
-        title={editingRoute ? 'Редактирование маршрута' : 'Новый маршрут'}
-        description="Укажите роли, порядок и наименования шагов. Маршрут можно отключить без удаления."
-        size="xl"
-      >
-        <div className="space-y-5">
-          {routeError ? (
-            <div className="rounded-2xl border border-[rgba(180,79,64,0.18)] bg-[rgba(180,79,64,0.08)] px-4 py-3 text-sm text-[var(--danger)]">
-              {routeError}
-            </div>
-          ) : null}
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Название маршрута">
-              <Input value={routeForm.name} onChange={(event) => setRouteForm((current) => ({ ...current, name: event.target.value }))} />
-            </Field>
-            <Field label="Статус">
-              <Select value={String(routeForm.is_active)} onChange={(event) => setRouteForm((current) => ({ ...current, is_active: event.target.value === 'true' }))}>
-                <option value="true">Активен</option>
-                <option value="false">Отключен</option>
-              </Select>
-            </Field>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-[var(--foreground)]">Этапы маршрута</h3>
-              <Button
-                variant="secondary"
-                onClick={() => setRouteForm((current) => ({
-                  ...current,
-                  stages: [
-                    ...current.stages,
-                    { name: 'Новый этап', role: 'manager', order: current.stages.length + 1 },
-                  ],
-                }))}
-              >
-                Добавить этап
-              </Button>
-            </div>
-
-            {buildStagePreview(routeForm.stages).map((stage, index) => (
-              <div key={stage.key} className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/75 p-4 md:grid-cols-[0.22fr_0.78fr_0.8fr_auto]">
-                <Field label="Порядок">
-                  <Input
-                    type="number"
-                    value={routeForm.stages[index].order}
-                    onChange={(event) => setRouteForm((current) => ({
-                      ...current,
-                      stages: current.stages.map((item, itemIndex) => itemIndex === index ? { ...item, order: Number(event.target.value || item.order) } : item),
-                    }))}
-                  />
-                </Field>
-                <Field label="Название">
-                  <Input
-                    value={routeForm.stages[index].name}
-                    onChange={(event) => setRouteForm((current) => ({
-                      ...current,
-                      stages: current.stages.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item),
-                    }))}
-                  />
-                </Field>
-                <Field label="Роль">
-                  <Select
-                    value={routeForm.stages[index].role}
-                    onChange={(event) => setRouteForm((current) => ({
-                      ...current,
-                      stages: current.stages.map((item, itemIndex) => itemIndex === index ? { ...item, role: event.target.value } : item),
-                    }))}
-                  >
-                    {roleOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </Select>
-                </Field>
-                <div className="self-end">
-                  <Button
-                    variant="ghost"
-                    onClick={() => setRouteForm((current) => ({
-                      ...current,
-                      stages: current.stages.filter((_, itemIndex) => itemIndex !== index),
-                    }))}
-                  >
-                    Убрать
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap justify-between gap-3">
-            <div>
-              {editingRoute ? (
-                <Button variant="danger" onClick={() => deleteRouteMutation.mutate(editingRoute.id)} busy={deleteRouteMutation.isPending}>
-                  Удалить
-                </Button>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Button variant="secondary" onClick={closeRouteModal}>Отмена</Button>
-              <Button onClick={() => saveRouteMutation.mutate()} busy={saveRouteMutation.isPending}>Сохранить маршрут</Button>
-            </div>
-          </div>
-        </div>
-      </Modal>
 
       <Modal
         open={Boolean(taskAction)}
@@ -414,4 +271,3 @@ export default function ApprovalsPage() {
     </div>
   );
 }
-

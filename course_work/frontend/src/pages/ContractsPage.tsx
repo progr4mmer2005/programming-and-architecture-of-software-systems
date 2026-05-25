@@ -1,7 +1,7 @@
 ﻿import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CircleSlash, Plus, Search, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowRight, CircleSlash, Plus, Search, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
 import apiClient from '@/api/client';
 import { useAuthStore } from '@/stores/authStore';
 import { formatContractPrice, formatDate, formatMoney, formatNumber, getResults } from '@/shared/lib/format';
@@ -30,8 +30,16 @@ function getContractTone(status: string) {
 export default function ContractsPage() {
   const permissions = useAuthStore((state) => state.permissions);
   const canManageContracts = Boolean(permissions?.can_manage_contracts);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+
+  const deleteMutation = useMutation({
+    mutationFn: (contractId: number) => apiClient.delete(`/contracts/${contractId}/`),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['contracts'] });
+    },
+  });
 
   const { data, isLoading } = useQuery<PaginatedResponse<Contract>>({
     queryKey: ['contracts', search, status],
@@ -159,6 +167,25 @@ export default function ContractsPage() {
                     <p className="mt-2 text-sm font-semibold text-[var(--foreground)]">v{contract.current_version}</p>
                   </div>
                 </div>
+                {canManageContracts ? (
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      variant="ghost"
+                      onClick={async (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (!confirm(`Удалить договор "${contract.title}"?`)) {
+                          return;
+                        }
+                        await deleteMutation.mutateAsync(contract.id);
+                      }}
+                      busy={deleteMutation.isPending}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Удалить
+                    </Button>
+                  </div>
+                ) : null}
               </Link>
             ))}
           </div>

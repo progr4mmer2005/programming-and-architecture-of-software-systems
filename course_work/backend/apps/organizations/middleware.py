@@ -1,13 +1,24 @@
-"""Multi-tenant middleware that attaches organization to the request."""
+﻿"""Multi-tenant middleware that attaches active organization to the request."""
 from django.utils.deprecation import MiddlewareMixin
 
 
 class OrganizationMiddleware(MiddlewareMixin):
-    """Attaches the user's organization to the request for multi-tenant filtering."""
+    """Attaches the active organization context to the request."""
 
     def process_request(self, request):
-        """Set organization on request from authenticated user."""
-        if request.user.is_authenticated:
-            request.organization = getattr(request.user, 'organization', None)
-        else:
+        if not request.user.is_authenticated:
             request.organization = None
+            return
+
+        request.organization = getattr(request.user, 'organization', None)
+        if request.organization is not None:
+            return
+
+        membership = request.user.memberships.select_related('organization', 'role').filter(is_active=True).first()
+        if membership is None:
+            return
+
+        request.user.organization = membership.organization
+        request.user.role = membership.role.code
+        request.user.save(update_fields=['organization', 'role'])
+        request.organization = membership.organization

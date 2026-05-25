@@ -6,7 +6,7 @@ from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.accounts.models import User
+from apps.accounts.models import OrganizationMembership
 from apps.approvals.models import ApprovalRoute, ApprovalTask
 from apps.approvals.serializers import ApprovalTaskSerializer
 from apps.attachments.models import FileAttachment
@@ -17,6 +17,7 @@ from apps.core.permissions import (
     CanLaunchApproval,
     CanManageContracts,
     CanViewContracts,
+    role_has_permission,
     scope_contract_queryset,
     scope_related_to_contract_queryset,
 )
@@ -99,7 +100,7 @@ class ContractViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def launch_approval(self, request, pk=None):
         contract = self.get_object()
-        if request.user.role not in [User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER, User.Role.DIRECTOR]:
+        if not role_has_permission(request.user, 'can_launch_approval'):
             return Response({'error': 'Недостаточно прав для запуска согласования.'}, status=status.HTTP_403_FORBIDDEN)
         active_tasks = ApprovalTask.objects.filter(contract=contract, status__in=[ApprovalTask.Status.PENDING, ApprovalTask.Status.WAITING])
         if active_tasks.exists():
@@ -111,12 +112,22 @@ class ContractViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
         if not stages:
             return Response({'error': 'У выбранного маршрута не настроены этапы.'}, status=status.HTTP_400_BAD_REQUEST)
         first_stage_order = int(stages[0].get('order', 1) or 1)
-        org_users = User.objects.filter(organization=self.request.organization, is_active=True)
         created_tasks = []
         for stage in stages:
             stage_order = int(stage.get('order', first_stage_order) or first_stage_order)
             role = str(stage.get('role', '')).strip()
-            assignee = org_users.filter(role=role).order_by('date_joined').first() if role else None
+            assignee_id = stage.get('assigned_to')
+            if assignee_id in [None, '']:
+                return Response({'error': f'Для этапа "{stage.get("name") or stage_order}" не задан ответственный согласующий.'}, status=status.HTTP_400_BAD_REQUEST)
+            assignee_membership = OrganizationMembership.objects.select_related('user', 'role').filter(
+                organization=self.request.organization,
+                user_id=assignee_id,
+                user__is_active=True,
+                is_active=True,
+            ).first()
+            if assignee_membership is None or assignee_membership.role.code != role:
+                return Response({'error': f'Ответственный пользователь этапа "{stage.get("name") or stage_order}" не найден или не соответствует роли.'}, status=status.HTTP_400_BAD_REQUEST)
+            assignee = assignee_membership.user
             created_tasks.append(ApprovalTask.objects.create(
                 contract=contract,
                 route=route,

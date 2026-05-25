@@ -19,9 +19,17 @@ import { useMemo, useState } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { Badge, Button } from '@/shared/components/ui';
 import { hasPermission } from '@/shared/lib/access';
+import { roleLabels } from '@/shared/types/domain';
 import { cn } from '@/shared/lib/utils';
 
 const navigation = [
+  {
+    name: 'Мои организации',
+    href: '/workspace',
+    permission: '',
+    icon: Sparkles,
+    description: 'Список ваших организаций, приглашения и быстрый переход в нужное рабочее пространство.',
+  },
   {
     name: 'Главная',
     href: '/',
@@ -94,22 +102,14 @@ const navigation = [
   },
 ];
 
-const roleLabels: Record<string, string> = {
-  owner: 'Владелец',
-  director: 'Руководитель',
-  manager: 'Менеджер',
-  approver: 'Согласующее лицо',
-  admin: 'Администратор',
-};
-
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, permissions, logout } = useAuthStore();
+  const { user, permissions, invitations, logout } = useAuthStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const visibleNavigation = useMemo(
-    () => navigation.filter((item) => hasPermission(permissions, item.permission)),
+    () => navigation.filter((item) => item.permission ? hasPermission(permissions, item.permission) : true),
     [permissions],
   );
 
@@ -216,6 +216,7 @@ export default function Layout() {
                 <p className="truncate text-xs text-[var(--muted-foreground)]">
                   {user?.role ? roleLabels[user.role] || user.role : 'Пользователь'}
                 </p>
+                {invitations.length ? <Badge tone="accent" className="mt-2">{`Приглашений: ${invitations.length}`}</Badge> : null}
               </div>
             </div>
             <Button

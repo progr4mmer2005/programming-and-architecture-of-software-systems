@@ -19,6 +19,8 @@ import PaymentsPage from '@/pages/PaymentsPage';
 import OrganizationPage from '@/pages/OrganizationPage';
 import ReportsPage from '@/pages/ReportsPage';
 import CalendarPage from '@/pages/CalendarPage';
+import WorkspacePage from '@/pages/WorkspacePage';
+import CreateOrganizationPage from '@/pages/CreateOrganizationPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,6 +44,17 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/workspace"
+        element={(
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        )}
+      >
+        <Route index element={<WorkspacePage />} />
+        <Route path="create" element={<CreateOrganizationPage />} />
+      </Route>
       <Route
         path="/"
         element={(

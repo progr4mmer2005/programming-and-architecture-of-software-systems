@@ -1,6 +1,7 @@
 ﻿import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, FileText, Plus, Trash2, Upload } from 'lucide-react';
+
 import apiClient from '@/api/client';
 import { formatDate, formatNumber, getResults } from '@/shared/lib/format';
 import { useAuthStore } from '@/stores/authStore';
@@ -31,6 +32,8 @@ const initialState: TemplateFormState = {
   is_active: true,
 };
 
+const steps = ['Основное', 'Статус', 'Проверка'] as const;
+
 function fileSize(size?: number) {
   if (!size) return 'Размер не указан';
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} КБ`;
@@ -47,6 +50,7 @@ export default function TemplatesPage() {
   const [editing, setEditing] = useState<ContractTemplate | null>(null);
   const [form, setForm] = useState<TemplateFormState>(initialState);
   const [error, setError] = useState('');
+  const [stepIndex, setStepIndex] = useState(0);
 
   const { data: payload } = useQuery<PaginatedResponse<ContractTemplate>>({
     queryKey: ['templates', search],
@@ -60,6 +64,7 @@ export default function TemplatesPage() {
     setEditing(null);
     setForm(initialState);
     setError('');
+    setStepIndex(0);
     setIsModalOpen(true);
   };
 
@@ -72,6 +77,7 @@ export default function TemplatesPage() {
       is_active: template.is_active,
     });
     setError('');
+    setStepIndex(0);
     setIsModalOpen(true);
   };
 
@@ -80,6 +86,7 @@ export default function TemplatesPage() {
     setEditing(null);
     setForm(initialState);
     setError('');
+    setStepIndex(0);
   };
 
   const saveMutation = useMutation({
@@ -145,45 +152,16 @@ export default function TemplatesPage() {
         )}
       </SectionCard>
 
-      <Modal
-        open={isModalOpen}
-        onClose={closeModal}
-        title={editing ? 'Редактирование шаблона' : 'Новый шаблон'}
-        description="Карточка шаблона хранит название и описание."
-        size="xl"
-      >
+      <Modal open={isModalOpen} onClose={closeModal} title={editing ? 'Редактирование шаблона' : 'Новый шаблон'} size="xl">
         <div className="space-y-5">
-          {error ? (
-            <div className="rounded-2xl border border-[rgba(180,79,64,0.18)] bg-[rgba(180,79,64,0.08)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
-          ) : null}
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Название шаблона">
-              <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
-            </Field>
-            <Field label="Статус">
-              <Select value={String(form.is_active)} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.value === 'true' }))}>
-                <option value="true">Активен</option>
-                <option value="false">Отключен</option>
-              </Select>
-            </Field>
-            <div className="md:col-span-2">
-              <Field label="Описание">
-                <Textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} />
-              </Field>
-            </div>
-          </div>
+          <div className="flex flex-wrap gap-2">{steps.map((step, idx) => <button type="button" key={step} onClick={() => setStepIndex(idx)} className={`rounded-full border px-3 py-1.5 text-sm ${stepIndex===idx?'border-[var(--brand)] bg-[rgba(31,77,61,0.1)] text-[var(--brand)]':'border-[var(--line)] bg-white/75 text-[var(--muted-foreground)]'}`}>{idx+1}. {step}</button>)}</div>
+          {error ? (<div className="rounded-2xl border border-[rgba(180,79,64,0.18)] bg-[rgba(180,79,64,0.08)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>) : null}
+          {stepIndex===0 ? <div className="grid gap-4"><Field label="Название шаблона"><Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} /></Field><Field label="Описание"><Textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></Field></div> : null}
+          {stepIndex===1 ? <Field label="Статус"><Select value={String(form.is_active)} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.value === 'true' }))}><option value="true">Активен</option><option value="false">Отключен</option></Select></Field> : null}
+          {stepIndex===2 ? <div className="rounded-xl border border-[var(--line)] bg-white/80 p-4 text-sm space-y-1"><p><b>Название:</b> {form.name || 'Не заполнено'}</p><p><b>Статус:</b> {form.is_active ? 'Активен' : 'Отключен'}</p><p><b>Описание:</b> {form.description || 'Не заполнено'}</p></div> : null}
           <div className="flex flex-wrap justify-between gap-3">
-            <div>
-              {editing ? (
-                <Button variant="danger" onClick={() => deleteMutation.mutate(editing.id)} busy={deleteMutation.isPending}>
-                  Удалить шаблон
-                </Button>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Button variant="secondary" onClick={closeModal}>Отмена</Button>
-              <Button onClick={() => saveMutation.mutate()} busy={saveMutation.isPending}>Сохранить</Button>
-            </div>
+            <div>{editing ? <Button variant="danger" onClick={() => deleteMutation.mutate(editing.id)} busy={deleteMutation.isPending}>Удалить шаблон</Button> : null}</div>
+            <div className="flex flex-wrap gap-3"><Button variant="secondary" onClick={closeModal}>Отмена</Button>{stepIndex>0?<Button variant="secondary" onClick={()=>setStepIndex((s)=>s-1)}>Назад</Button>:null}{stepIndex<steps.length-1?<Button onClick={()=>{ if (!form.name.trim() && stepIndex===0){ setError('Введите название шаблона.'); return; } setError(''); setStepIndex((s)=>s+1); }}>Далее</Button>:<Button onClick={() => saveMutation.mutate()} busy={saveMutation.isPending}>Сохранить</Button>}</div>
           </div>
         </div>
       </Modal>
@@ -228,13 +206,9 @@ function TemplateCard({ template, canManage, onEdit }: { template: ContractTempl
             </Badge>
           </div>
           <h3 className="mt-4 break-words text-lg font-semibold leading-8 text-[var(--foreground)]">{template.name}</h3>
-          <p className="mt-2 break-words text-sm leading-7 text-[var(--muted-foreground)]">
-            {template.description || 'Описание не заполнено.'}
-          </p>
+          <p className="mt-2 break-words text-sm leading-7 text-[var(--muted-foreground)]">{template.description || 'Описание не заполнено.'}</p>
         </div>
-        {canManage ? (
-          <Button variant="secondary" onClick={() => onEdit(template)}>Изменить</Button>
-        ) : null}
+        {canManage ? <Button variant="secondary" onClick={() => onEdit(template)}>Изменить</Button> : null}
       </div>
 
       {files.length ? (
@@ -247,48 +221,18 @@ function TemplateCard({ template, canManage, onEdit }: { template: ContractTempl
                 <p className="text-xs text-[var(--muted-foreground)]">{fileSize(file.size)} • {formatDate(file.uploaded_at, true)}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <a
-                  href={file.file_url || file.file}
-                  download={file.file_name}
-                  className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--line)] bg-white/80 px-3 py-1.5 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--line-strong)] hover:bg-white"
-                >
-                  <Download className="h-3.5 w-3.5" />Скачать
-                </a>
-                {canManage ? (
-                  <Button
-                    variant="ghost"
-                    className="px-3 py-1.5 text-sm"
-                    onClick={async () => {
-                      if (confirm('Удалить файл?')) {
-                        await apiClient.delete(`/file-attachments/${file.id}/`);
-                        await queryClient.invalidateQueries({ queryKey: ['template-files', template.id] });
-                      }
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />Удалить
-                  </Button>
-                ) : null}
+                <a href={file.file_url || file.file} download={file.file_name} className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--line)] bg-white/80 px-3 py-1.5 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--line-strong)] hover:bg-white"><Download className="h-3.5 w-3.5" />Скачать</a>
+                {canManage ? <Button variant="ghost" className="px-3 py-1.5 text-sm" onClick={async () => { if (confirm('Удалить файл?')) { await apiClient.delete(`/file-attachments/${file.id}/`); await queryClient.invalidateQueries({ queryKey: ['template-files', template.id] }); } }}><Trash2 className="h-3.5 w-3.5" />Удалить</Button> : null}
               </div>
             </div>
           ))}
         </div>
-      ) : (
-        <p className="mt-4 text-sm text-[var(--muted-foreground)]">Файлы не прикреплены.</p>
-      )}
+      ) : <p className="mt-4 text-sm text-[var(--muted-foreground)]">Файлы не прикреплены.</p>}
 
       {canManage ? (
         <div className="mt-4 flex flex-wrap items-end gap-3">
-          <Field label="Прикрепить файл">
-            <Input type="file" onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)} />
-          </Field>
-          <Button
-            variant="secondary"
-            onClick={() => uploadMutation.mutate()}
-            busy={uploadMutation.isPending}
-            disabled={!uploadFile}
-          >
-            Загрузить
-          </Button>
+          <Field label="Прикрепить файл"><Input type="file" onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)} /></Field>
+          <Button variant="secondary" onClick={() => uploadMutation.mutate()} busy={uploadMutation.isPending} disabled={!uploadFile}>Загрузить</Button>
         </div>
       ) : null}
     </div>

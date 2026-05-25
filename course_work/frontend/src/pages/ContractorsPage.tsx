@@ -1,9 +1,9 @@
 ﻿import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, GitBranchPlus, Link2, Network, Plus } from 'lucide-react';
+import { Building2, Link2, Network, Plus } from 'lucide-react';
 import apiClient from '@/api/client';
 import { formatNumber, getResults } from '@/shared/lib/format';
-import type { Contractor, Organization, PaginatedResponse } from '@/shared/types/domain';
+import type { Contractor, PaginatedResponse } from '@/shared/types/domain';
 import {
   Badge,
   Button,
@@ -54,6 +54,15 @@ const initialState: ContractorFormState = {
 };
 
 export default function ContractorsPage() {
+  const wizardSteps = [
+    { key: 'main', label: 'Основное' },
+    { key: 'contacts', label: 'Контакты и адрес' },
+    { key: 'bank', label: 'Реквизиты' },
+    { key: 'extra', label: 'Дополнительно' },
+    { key: 'review', label: 'Проверка' },
+  ] as const;
+  type WizardStepKey = typeof wizardSteps[number]['key'];
+
   const queryClient = useQueryClient();
   const permissions = useAuthStore((state) => state.permissions);
   const canManageContractors = Boolean(permissions?.can_manage_contractors);
@@ -63,6 +72,7 @@ export default function ContractorsPage() {
   const [editing, setEditing] = useState<Contractor | null>(null);
   const [form, setForm] = useState<ContractorFormState>(initialState);
   const [error, setError] = useState('');
+  const [stepIndex, setStepIndex] = useState(0);
 
   const { data: payload } = useQuery<PaginatedResponse<Contractor>>({
     queryKey: ['contractors', 'linked', search, activeFilter],
@@ -87,21 +97,10 @@ export default function ContractorsPage() {
     },
   });
 
-  const { data: internalOrganizations = [] } = useQuery<Organization[]>({
-    queryKey: ['contractors', 'internal-organizations', search],
-    queryFn: async () => {
-      const response = await apiClient.get('/contractors/internal_organizations/', {
-        params: { search: search || undefined },
-      });
-      return response.data;
-    },
-  });
-
   const contractors = getResults(payload);
   const directory = getResults(directoryPayload);
   const activeCount = contractors.filter((item) => item.is_active).length;
   const totalBankProfiles = contractors.filter((item) => item.bank_account && item.bank_bik).length;
-  const linkedInternalCount = contractors.filter((item) => item.linked_organization).length;
 
   const invalidateAll = async () => {
     await Promise.all([
@@ -118,6 +117,7 @@ export default function ContractorsPage() {
     setEditing(null);
     setForm(initialState);
     setError('');
+    setStepIndex(0);
     setIsModalOpen(false);
   };
 
@@ -125,6 +125,7 @@ export default function ContractorsPage() {
     setEditing(null);
     setForm(initialState);
     setError('');
+    setStepIndex(0);
     setIsModalOpen(true);
   };
 
@@ -147,6 +148,7 @@ export default function ContractorsPage() {
       is_active: contractor.is_active,
     });
     setError('');
+    setStepIndex(0);
     setIsModalOpen(true);
   };
 
@@ -182,17 +184,23 @@ export default function ContractorsPage() {
     onSuccess: invalidateAll,
   });
 
-  const linkOrganizationMutation = useMutation({
-    mutationFn: (organizationId: number) => apiClient.post('/contractors/link_organization/', { organization_id: organizationId }),
-    onSuccess: invalidateAll,
-  });
+
+
+  const activeStep = wizardSteps[stepIndex];
+  const isMainStepValid = form.name.trim().length > 0 && form.inn.trim().length > 0;
+  const canGoNext = activeStep.key === 'main' ? isMainStepValid : true;
+
+  const goToStep = (index: number) => setStepIndex(Math.max(0, Math.min(index, wizardSteps.length - 1)));
+  const goNext = () => goToStep(stepIndex + 1);
+  const goBack = () => goToStep(stepIndex - 1);
+  const goReview = () => goToStep(wizardSteps.length - 1);
 
   return (
     <div className="space-y-6">
       <PageIntro
         eyebrow="Реестр контрагентов"
         title="Глобальный справочник и связи с Вашей организацией"
-        description="В системе используется единая карточка контрагента на всю базу данных. Ваша организация связывается с уже существующими контрагентами, создаёт новые карточки или использует другую организацию системы как контрагента."
+        description="В системе используется единая карточка контрагента на всю базу данных. Ваша организация связывается с уже существующими контрагентами или создаёт новые карточки."
         actions={canManageContractors ? (
           <Button className="rounded-2xl px-5 py-3" onClick={openCreate}>
             <Plus className="h-4 w-4" />
@@ -205,10 +213,10 @@ export default function ContractorsPage() {
         <StatCard label="Связаны с Вами" value={formatNumber(contractors.length)} hint={`${formatNumber(payload?.count)} в текущей выборке`} tone="brand" icon={<Building2 className="h-5 w-5" />} />
         <StatCard label="Активные связи" value={formatNumber(activeCount)} hint="Контрагенты, доступные для договоров" tone="neutral" icon={<Link2 className="h-5 w-5" />} />
         <StatCard label="Во всём справочнике" value={formatNumber(directoryPayload?.count)} hint="Глобальный реестр БД" tone="accent" icon={<Network className="h-5 w-5" />} />
-        <StatCard label="Организации системы" value={formatNumber(linkedInternalCount)} hint={`${formatNumber(totalBankProfiles)} карточек с банковскими данными`} tone="danger" icon={<GitBranchPlus className="h-5 w-5" />} />
+        <StatCard label="С банковскими реквизитами" value={formatNumber(totalBankProfiles)} hint="Карточки, где заполнены счёт и БИК" tone="danger" icon={<Building2 className="h-5 w-5" />} />
       </div>
 
-      <SectionCard title="Поиск и фильтрация" description="Поиск одновременно работает по Вашему списку, общему справочнику и организациям системы.">
+      <SectionCard title="Поиск и фильтрация" description="Поиск одновременно работает по Вашему списку и общему справочнику.">
         <div className="grid gap-4 md:grid-cols-[1.25fr_0.75fr]">
           <Field label="Поиск по названию, ИНН, email или контактному лицу">
             <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Например: СтройИнвест" />
@@ -267,7 +275,7 @@ export default function ContractorsPage() {
         ) : (
           <EmptyState
             title="Связанных контрагентов пока нет"
-            description="Вы можете создать новую глобальную карточку, привязать готового контрагента из общего справочника или использовать другую организацию системы как контрагента."
+            description="Вы можете создать новую глобальную карточку или привязать готового контрагента из общего справочника."
             action={canManageContractors ? <Button onClick={openCreate}>Создать карточку</Button> : undefined}
           />
         )}
@@ -314,47 +322,6 @@ export default function ContractorsPage() {
         )}
       </SectionCard>
 
-      <SectionCard title="Организации системы как контрагенты" description="Если в системе уже заведена другая организация, её можно использовать как контрагента и связать с Вашей организацией без повторного ввода реквизитов.">
-        {internalOrganizations.length ? (
-          <div className="grid gap-4 xl:grid-cols-2">
-            {internalOrganizations.map((organization) => (
-              <div key={organization.id} className="rounded-[1.8rem] border border-[var(--line)] bg-white/70 p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone={organization.is_active ? 'success' : 'neutral'}>
-                        {organization.is_active ? 'Активная организация' : 'Неактивная организация'}
-                      </Badge>
-                      <Badge tone="neutral">{organization.inn}</Badge>
-                    </div>
-                    <h3 className="mt-3 text-lg font-semibold text-[var(--foreground)]">{organization.name}</h3>
-                    <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-                      {organization.legal_name || 'Юридическое наименование не заполнено'}
-                    </p>
-                  </div>
-                  {canManageContractors ? (
-                    <Button
-                      variant="secondary"
-                      onClick={() => linkOrganizationMutation.mutate(organization.id)}
-                      busy={linkOrganizationMutation.isPending}
-                    >
-                      Использовать как контрагента
-                    </Button>
-                  ) : (
-                    <Badge tone="neutral">Только просмотр</Badge>
-                  )}
-                </div>
-                <p className="mt-4 line-clamp-2 text-sm leading-7 text-[var(--muted-foreground)]">
-                  {organization.address || 'Адрес организации пока не заполнен.'}
-                </p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <EmptyState title="Другие организации не найдены" description="По текущему запросу система не нашла организации, которые можно использовать как контрагентов." />
-        )}
-      </SectionCard>
-
       <Modal
         open={isModalOpen}
         onClose={resetModal}
@@ -369,57 +336,102 @@ export default function ContractorsPage() {
             </div>
           ) : null}
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Краткое название">
-              <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
-            </Field>
-            <Field label="Полное название">
-              <Input value={form.full_name} onChange={(event) => setForm((current) => ({ ...current, full_name: event.target.value }))} />
-            </Field>
-            <Field label="ИНН">
-              <Input value={form.inn} onChange={(event) => setForm((current) => ({ ...current, inn: event.target.value }))} />
-            </Field>
-            <Field label="КПП">
-              <Input value={form.kpp} onChange={(event) => setForm((current) => ({ ...current, kpp: event.target.value }))} />
-            </Field>
-            <Field label="ОГРН">
-              <Input value={form.ogrn} onChange={(event) => setForm((current) => ({ ...current, ogrn: event.target.value }))} />
-            </Field>
-            <Field label="Контактное лицо">
-              <Input value={form.contact_person} onChange={(event) => setForm((current) => ({ ...current, contact_person: event.target.value }))} />
-            </Field>
-            <Field label="Телефон">
-              <Input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} />
-            </Field>
-            <Field label="Email">
-              <Input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} />
-            </Field>
-            <Field label="Банк">
-              <Input value={form.bank_name} onChange={(event) => setForm((current) => ({ ...current, bank_name: event.target.value }))} />
-            </Field>
-            <Field label="БИК">
-              <Input value={form.bank_bik} onChange={(event) => setForm((current) => ({ ...current, bank_bik: event.target.value }))} />
-            </Field>
-            <Field label="Расчётный счёт">
-              <Input value={form.bank_account} onChange={(event) => setForm((current) => ({ ...current, bank_account: event.target.value }))} />
-            </Field>
-            <Field label="Статус карточки">
-              <Select value={String(form.is_active)} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.value === 'true' }))}>
-                <option value="true">Активная</option>
-                <option value="false">Неактивная</option>
-              </Select>
-            </Field>
-            <div className="md:col-span-2">
-              <Field label="Адрес">
-                <Textarea value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} />
-              </Field>
-            </div>
-            <div className="md:col-span-2">
-              <Field label="Примечания">
-                <Textarea value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
-              </Field>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            {wizardSteps.map((step, index) => (
+              <button
+                type="button"
+                key={step.key}
+                onClick={() => goToStep(index)}
+                className={`rounded-full border px-3 py-1.5 text-xs transition ${
+                  index === stepIndex
+                    ? 'border-[var(--brand)] bg-[rgba(11,94,215,0.12)] text-[var(--brand)]'
+                    : 'border-[var(--line)] bg-white text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                {index + 1}. {step.label}
+              </button>
+            ))}
           </div>
+
+          {activeStep.key === 'main' ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Краткое название">
+                <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+              </Field>
+              <Field label="Полное название">
+                <Input value={form.full_name} onChange={(event) => setForm((current) => ({ ...current, full_name: event.target.value }))} />
+              </Field>
+              <Field label="ИНН">
+                <Input value={form.inn} onChange={(event) => setForm((current) => ({ ...current, inn: event.target.value }))} />
+              </Field>
+              <Field label="КПП">
+                <Input value={form.kpp} onChange={(event) => setForm((current) => ({ ...current, kpp: event.target.value }))} />
+              </Field>
+              <Field label="ОГРН">
+                <Input value={form.ogrn} onChange={(event) => setForm((current) => ({ ...current, ogrn: event.target.value }))} />
+              </Field>
+            </div>
+          ) : null}
+
+          {activeStep.key === 'contacts' ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Контактное лицо">
+                <Input value={form.contact_person} onChange={(event) => setForm((current) => ({ ...current, contact_person: event.target.value }))} />
+              </Field>
+              <Field label="Телефон">
+                <Input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} />
+              </Field>
+              <Field label="Email">
+                <Input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} />
+              </Field>
+              <div className="md:col-span-2">
+                <Field label="Адрес">
+                  <Textarea value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} />
+                </Field>
+              </div>
+            </div>
+          ) : null}
+
+          {activeStep.key === 'bank' ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Банк">
+                <Input value={form.bank_name} onChange={(event) => setForm((current) => ({ ...current, bank_name: event.target.value }))} />
+              </Field>
+              <Field label="БИК">
+                <Input value={form.bank_bik} onChange={(event) => setForm((current) => ({ ...current, bank_bik: event.target.value }))} />
+              </Field>
+              <Field label="Расчётный счёт">
+                <Input value={form.bank_account} onChange={(event) => setForm((current) => ({ ...current, bank_account: event.target.value }))} />
+              </Field>
+            </div>
+          ) : null}
+
+          {activeStep.key === 'extra' ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Статус карточки">
+                <Select value={String(form.is_active)} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.value === 'true' }))}>
+                  <option value="true">Активная</option>
+                  <option value="false">Неактивная</option>
+                </Select>
+              </Field>
+              <div className="md:col-span-2">
+                <Field label="Примечания">
+                  <Textarea value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
+                </Field>
+              </div>
+            </div>
+          ) : null}
+
+          {activeStep.key === 'review' ? (
+            <div className="rounded-2xl border border-[var(--line)] bg-white/70 p-4 text-sm text-[var(--muted-foreground)]">
+              <p><strong className="text-[var(--foreground)]">Название:</strong> {form.name || 'Не заполнено'}</p>
+              <p><strong className="text-[var(--foreground)]">ИНН:</strong> {form.inn || 'Не заполнено'}</p>
+              <p><strong className="text-[var(--foreground)]">Контакт:</strong> {form.contact_person || 'Не заполнено'}</p>
+              <p><strong className="text-[var(--foreground)]">Телефон:</strong> {form.phone || 'Не заполнено'}</p>
+              <p><strong className="text-[var(--foreground)]">Email:</strong> {form.email || 'Не заполнено'}</p>
+              <p><strong className="text-[var(--foreground)]">Банк/счёт:</strong> {form.bank_name || 'Не заполнено'} {form.bank_account ? `(${form.bank_account})` : ''}</p>
+            </div>
+          ) : null}
 
           <div className="flex flex-wrap justify-between gap-3">
             <div>
@@ -431,9 +443,23 @@ export default function ContractorsPage() {
             </div>
             <div className="flex flex-wrap gap-3">
               <Button variant="secondary" onClick={resetModal}>Отмена</Button>
-              <Button onClick={() => saveMutation.mutate()} busy={saveMutation.isPending}>
-                Сохранить карточку
-              </Button>
+              {stepIndex > 0 ? (
+                <Button variant="secondary" onClick={goBack}>Назад</Button>
+              ) : null}
+              {stepIndex < wizardSteps.length - 1 ? (
+                <>
+                  {stepIndex < wizardSteps.length - 2 ? (
+                    <Button variant="ghost" onClick={goReview}>Пропустить к проверке</Button>
+                  ) : null}
+                  <Button onClick={goNext} disabled={!canGoNext}>
+                    Далее
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={() => saveMutation.mutate()} busy={saveMutation.isPending} disabled={!isMainStepValid}>
+                  Сохранить карточку
+                </Button>
+              )}
             </div>
           </div>
         </div>

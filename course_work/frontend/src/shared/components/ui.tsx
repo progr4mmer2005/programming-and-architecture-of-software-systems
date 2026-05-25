@@ -195,6 +195,7 @@ export function SectionCard({
 
 export function EmptyState({
   title,
+  description,
   action,
 }: {
   title: string;
@@ -204,6 +205,7 @@ export function EmptyState({
   return (
     <div className="rounded-[1.4rem] border border-dashed border-[var(--line-strong)] bg-white/45 px-6 py-10 text-center">
       <h3 className="text-lg font-semibold text-[var(--foreground)]">{title}</h3>
+      {description ? <p className="mt-3 text-sm leading-7 text-[var(--muted-foreground)]">{description}</p> : null}
       {action ? <div className="mt-5 flex justify-center">{action}</div> : null}
     </div>
   );

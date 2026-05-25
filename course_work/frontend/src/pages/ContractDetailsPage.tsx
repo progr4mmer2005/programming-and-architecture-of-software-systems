@@ -1,12 +1,12 @@
 ﻿import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { BadgeCheck, Clock3, Download, FileText, History, Plus, Receipt, Save, ShieldCheck, Trash2, WalletCards } from 'lucide-react';
 import apiClient from '@/api/client';
 import { useAuthStore } from '@/stores/authStore';
 import { calculateContractDebt, calculateContractPaidAmount, calculateStageActualAmount, calculateStagePlannedAmount, formatContractPrice, formatDate, formatMoney, getResults, prettyJson } from '@/shared/lib/format';
 import type { Act, ApprovalRoute, ApprovalTask, AuditLog, Comment, Contract, ContractPriceType, ContractStage, ContractStatus, ContractVersion, Contractor, Estimate, EstimateItem, EstimateStatus, FileAttachment, FileCategory, PaginatedResponse, Payment, PaymentStatus, PaymentType, ReferenceEntry, StageStatus, User } from '@/shared/types/domain';
-import { actStatusOptions, contractStatusOptions, estimateStatusOptions, fileCategoryOptions, paymentStatusOptions, paymentTypeOptions, priceTypeOptions, stageStatusOptions } from '@/shared/types/domain';
+import { actStatusOptions, contractStatusOptions, estimateStatusOptions, fileCategoryOptions, paymentStatusOptions, paymentTypeOptions, priceTypeOptions, roleOptions, stageStatusOptions } from '@/shared/types/domain';
 import { Badge, Button, DataTable, EmptyState, Field, Input, LoadingBlock, PageIntro, SectionCard, Select, StatCard, Textarea } from '@/shared/components/ui';
 
 interface ContractFormState { title: string; number: string; status: ContractStatus; contractor: string; price_type: ContractPriceType; amount: string; currency: string; start_date: string; end_date: string; signing_date: string; termination_date: string; payment_terms: string; description: string; responsible: string; }
@@ -15,12 +15,14 @@ interface ActFormState { stage: string; number: string; title: string; date: str
 interface PaymentFormState { stage: string; act: string; type: PaymentType; amount: string; planned_date: string; paid_date: string; status: PaymentStatus; description: string; }
 interface EstimateFormState { title: string; number: string; status: EstimateStatus; currency: string; }
 interface FileFormState { category: FileCategory; file: File | null; }
+interface ApprovalRouteFormState { name: string; stages: Array<{ name: string; role: string; order: string }>; }
 
 const emptyStage: StageFormState = { name: '', order: '1', status: 'planned', planned_amount: '', start_date: '', end_date: '', description: '' };
 const emptyAct: ActFormState = { stage: '', number: '', title: '', date: '', amount: '', status: 'draft', description: '' };
 const emptyPayment: PaymentFormState = { stage: '', act: '', type: 'planned', amount: '', planned_date: '', paid_date: '', status: 'pending', description: '' };
 const emptyEstimate: EstimateFormState = { title: '', number: '', status: 'draft', currency: 'RUB' };
 const emptyFile: FileFormState = { category: 'other', file: null };
+const emptyApprovalRoute: ApprovalRouteFormState = { name: '', stages: [{ name: '????????', role: 'approver', order: '1' }, { name: '???????????', role: 'director', order: '2' }] };
 
 function buildContractForm(contract: Contract): ContractFormState {
   return { title: contract.title, number: contract.number || '', status: contract.status, contractor: contract.contractor ? String(contract.contractor) : '', price_type: contract.price_type, amount: contract.amount == null ? '' : String(contract.amount), currency: contract.currency || 'RUB', start_date: contract.start_date || '', end_date: contract.end_date || '', signing_date: contract.signing_date || '', termination_date: contract.termination_date || '', payment_terms: contract.payment_terms || '', description: contract.description || '', responsible: contract.responsible ? String(contract.responsible) : '' };
@@ -36,10 +38,12 @@ function ContractDetailsContent(props: { contract: Contract; contractors: Contra
   const { contract, contractors, users, versions, comments, audit, stages, estimates, payments, approvals, approvalRoutes, files, acts, currencies } = props;
   const contractId = contract.id;
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const permissions = useAuthStore((state) => state.permissions);
   const canManageContracts = Boolean(permissions?.can_manage_contracts);
   const canManagePayments = Boolean(permissions?.can_manage_payments || permissions?.can_manage_contracts);
   const canLaunchApproval = Boolean(permissions?.can_launch_approval);
+  const canManageApprovalRoutes = Boolean(permissions?.can_manage_approval_routes);
   const [form, setForm] = useState<ContractFormState>(buildContractForm(contract));
   const [stageForm, setStageForm] = useState<StageFormState>(emptyStage);
   const [actForm, setActForm] = useState<ActFormState>(emptyAct);
@@ -48,6 +52,8 @@ function ContractDetailsContent(props: { contract: Contract; contractors: Contra
   const [fileForm, setFileForm] = useState<FileFormState>(emptyFile);
   const [commentText, setCommentText] = useState('');
   const [approvalRouteId, setApprovalRouteId] = useState('');
+  const [isRouteEditorOpen, setIsRouteEditorOpen] = useState(false);
+  const [routeForm, setRouteForm] = useState<ApprovalRouteFormState>(emptyApprovalRoute);
   const [error, setError] = useState('');
   const estimateItems = useMemo(() => estimates.flatMap((estimate) => estimate.items ?? []) as EstimateItem[], [estimates]);
   const activeApprovalRoutes = approvalRoutes.filter((route) => route.is_active);
@@ -66,9 +72,11 @@ function ContractDetailsContent(props: { contract: Contract; contractors: Contra
   const fileMutation = useMutation({ mutationFn: async () => { if (!fileForm.file) throw new Error('file-required'); const payload = new FormData(); payload.append('entity_type', 'contract'); payload.append('entity_id', String(contractId)); payload.append('category', fileForm.category); payload.append('file', fileForm.file); return apiClient.post('/file-attachments/', payload); }, onSuccess: async () => { setFileForm(emptyFile); await queryClient.invalidateQueries({ queryKey: ['contract', contractId, 'files'] }); }, onError: () => setError('Не удалось загрузить файл договора.') });
   const commentMutation = useMutation({ mutationFn: () => apiClient.post('/comments/', { contract: contractId, text: commentText, is_internal: false }), onSuccess: async () => { setCommentText(''); await queryClient.invalidateQueries({ queryKey: ['contract', contractId, 'comments'] }); } });
   const launchApprovalMutation = useMutation({ mutationFn: () => apiClient.post(`/contracts/${contractId}/launch_approval/`, { route_id: selectedApprovalRouteId ? Number(selectedApprovalRouteId) : undefined }), onSuccess: async () => { await invalidateContract(); await queryClient.invalidateQueries({ queryKey: ['contract', contractId, 'approvals'] }); await queryClient.invalidateQueries({ queryKey: ['approval-tasks'] }); }, onError: () => setError('Не удалось запустить маршрут согласования.') });
+  const createRouteMutation = useMutation({ mutationFn: async () => { const response = await apiClient.post('/approval-routes/', { name: routeForm.name, is_active: true, stages: routeForm.stages.map((stage, index) => ({ name: stage.name, role: stage.role, order: Number(stage.order || index + 1) })).sort((left, right) => left.order - right.order) }); return response.data as ApprovalRoute; }, onSuccess: async (route) => { setApprovalRouteId(String(route.id)); setIsRouteEditorOpen(false); setRouteForm(emptyApprovalRoute); await queryClient.invalidateQueries({ queryKey: ['contract-detail', 'approval-routes'] }); }, onError: () => setError('Не удалось создать маршрут согласования.') });
+  const deleteMutation = useMutation({ mutationFn: () => apiClient.delete(`/contracts/${contractId}/`), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ['contracts'] }); navigate('/contracts'); }, onError: () => setError('Не удалось удалить договор.') });
 
   return <div className="space-y-6">
-    <PageIntro eyebrow="Договор" title={contract.title} actions={canManageContracts ? <Button onClick={() => saveMutation.mutate()} busy={saveMutation.isPending} className="rounded-2xl px-5 py-3"><Save className="h-4 w-4" />Сохранить</Button> : undefined} />
+    <PageIntro eyebrow="Договор" title={contract.title} actions={canManageContracts ? <div className="flex flex-wrap gap-3"><Button onClick={() => saveMutation.mutate()} busy={saveMutation.isPending} className="rounded-2xl px-5 py-3"><Save className="h-4 w-4" />Сохранить</Button><Button variant="ghost" onClick={() => { if (confirm(`Удалить договор "${contract.title}"?`)) { deleteMutation.mutate(); } }} busy={deleteMutation.isPending} className="rounded-2xl px-5 py-3"><Trash2 className="h-4 w-4" />Удалить договор</Button></div> : undefined} />
     <div className="grid gap-4 md:grid-cols-4">
       <StatCard label="Статус" value={contract.status_display || contractStatusOptions.find((item) => item.value === contract.status)?.label || contract.status} hint={`Версия v${contract.current_version}`} tone="brand" icon={<BadgeCheck className="h-5 w-5" />} />
       <StatCard label="Стоимость" value={formatContractPrice(contract, estimates)} hint={contract.contractor_name || 'Контрагент не выбран'} tone="accent" icon={<Receipt className="h-5 w-5" />} />
@@ -122,8 +130,9 @@ function ContractDetailsContent(props: { contract: Contract; contractors: Contra
     </SectionCard>
 
     <div className="grid gap-6 xl:grid-cols-2">
-      <SectionCard title="Согласование" action={canLaunchApproval && activeApprovalRoutes.length ? <Button onClick={() => launchApprovalMutation.mutate()} busy={launchApprovalMutation.isPending} disabled={hasActiveApproval || !selectedApprovalRouteId}><ShieldCheck className="h-4 w-4" />Запустить маршрут</Button> : undefined}>
-        {canLaunchApproval && activeApprovalRoutes.length ? <div className="mb-4"><Field label="Маршрут"><Select value={selectedApprovalRouteId} onChange={(event) => setApprovalRouteId(event.target.value)} disabled={hasActiveApproval}>{activeApprovalRoutes.map((route) => <option key={route.id} value={route.id}>{route.name}</option>)}</Select></Field></div> : null}
+      <SectionCard title="Согласование" action={canLaunchApproval || canManageApprovalRoutes ? <div className="grid w-full gap-3 sm:w-auto sm:min-w-[360px] sm:grid-cols-2">{canManageApprovalRoutes ? <Button variant="secondary" onClick={() => setIsRouteEditorOpen((current) => !current)} className="w-full rounded-2xl px-5 py-3">{isRouteEditorOpen ? 'Скрыть форму' : 'Новый маршрут'}</Button> : null}{canLaunchApproval ? <Button onClick={() => launchApprovalMutation.mutate()} busy={launchApprovalMutation.isPending} disabled={hasActiveApproval || !selectedApprovalRouteId} className="w-full rounded-2xl px-5 py-3"><ShieldCheck className="h-4 w-4" />Запустить маршрут</Button> : null}</div> : undefined}>
+        {activeApprovalRoutes.length ? <div className="mb-4"><Field label="Маршрут"><Select value={selectedApprovalRouteId} onChange={(event) => setApprovalRouteId(event.target.value)} disabled={hasActiveApproval}>{activeApprovalRoutes.map((route) => <option key={route.id} value={route.id}>{route.name}</option>)}</Select></Field></div> : <div className="mb-4 rounded-[1.4rem] border border-[var(--line)] bg-white/70 px-4 py-3 text-sm text-[var(--muted-foreground)]">Активные маршруты пока не созданы.</div>}
+        {false ? <div className="mb-5 space-y-4 rounded-[1.6rem] border border-[var(--line)] bg-white/75 p-4"><Field label="Название маршрута"><Input value={routeForm.name} onChange={(event) => setRouteForm((current) => ({ ...current, name: event.target.value }))} placeholder="Например: Согласование нестандартного договора" /></Field><div className="space-y-3">{routeForm.stages.map((stage, index) => <div key={`${index}-${stage.order}`} className="grid gap-3 rounded-[1.4rem] border border-[var(--line)] bg-[rgba(255,255,255,0.72)] p-3 md:grid-cols-[0.18fr_0.92fr_0.9fr_auto]"><Field label="Порядок"><Input type="number" value={stage.order} onChange={(event) => setRouteForm((current) => ({ ...current, stages: current.stages.map((item, itemIndex) => itemIndex === index ? { ...item, order: event.target.value } : item) }))} /></Field><Field label="Название этапа"><Input value={stage.name} onChange={(event) => setRouteForm((current) => ({ ...current, stages: current.stages.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) }))} /></Field><Field label="Роль"><Select value={stage.role} onChange={(event) => setRouteForm((current) => ({ ...current, stages: current.stages.map((item, itemIndex) => itemIndex === index ? { ...item, role: event.target.value } : item) }))}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></Field><div className="self-end">{routeForm.stages.length > 1 ? <Button variant="ghost" onClick={() => setRouteForm((current) => ({ ...current, stages: current.stages.filter((_, itemIndex) => itemIndex !== index) }))}>Убрать</Button> : null}</div></div>)}</div><div className="flex flex-wrap justify-between gap-3"><Button variant="ghost" onClick={() => setRouteForm((current) => ({ ...current, stages: [...current.stages, { name: 'Новый этап', role: 'approver', order: String(current.stages.length + 1) }] }))}><Plus className="h-4 w-4" />Добавить этап</Button><div className="flex flex-wrap gap-3"><Button variant="secondary" onClick={() => { setIsRouteEditorOpen(false); setRouteForm(emptyApprovalRoute); }}>Отмена</Button><Button onClick={() => createRouteMutation.mutate()} busy={createRouteMutation.isPending} disabled={!routeForm.name.trim() || routeForm.stages.some((stage) => !stage.name.trim())}>Сохранить маршрут</Button></div></div></div> : null}
         {approvals.length ? <div className="space-y-3">{approvals.map((task) => <div key={task.id} className="rounded-[1.5rem] border border-[var(--line)] bg-white/75 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><Badge tone={toneByStatus(task.status)}>{task.status_display || task.status}</Badge><span className="text-xs text-[var(--muted-foreground)]">Шаг {task.stage_order}</span></div><p className="mt-3 font-semibold text-[var(--foreground)]">{task.assigned_to_name || task.role}</p><p className="mt-1 text-sm text-[var(--muted-foreground)]">{task.comment || 'Комментарий не добавлен'}</p></div>)}</div> : <EmptyState title="Задачи согласования отсутствуют" />}
       </SectionCard>
       <SectionCard title="История версий">

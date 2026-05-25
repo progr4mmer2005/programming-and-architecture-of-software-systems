@@ -23,5 +23,5 @@ export function hasPermission(permissions: PermissionMap | null | undefined, key
 }
 
 export function getFirstAllowedPath(permissions: PermissionMap | null | undefined) {
-  return primaryAccessOrder.find((entry) => hasPermission(permissions, entry.permission))?.path || '/login';
+  return primaryAccessOrder.find((entry) => hasPermission(permissions, entry.permission))?.path || '/workspace';
 }

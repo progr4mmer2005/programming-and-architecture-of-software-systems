@@ -1,64 +1,35 @@
-"""Role matrix, queryset scoping and permission helpers for the API."""
+﻿"""Role matrix, queryset scoping and permission helpers for the API."""
 from __future__ import annotations
 
 from django.db.models import Q
 from rest_framework.permissions import BasePermission
 
-from apps.accounts.models import User
+from apps.accounts.models import User, build_default_user_permissions, build_permission_map
 
 
-ROLE_PERMISSIONS = {
+LEGACY_ROLE_PERMISSIONS = {
+    User.Role.SUPER_ADMIN: build_permission_map(True),
+    User.Role.USER: build_default_user_permissions(),
     User.Role.OWNER: {
-        'can_view_dashboard': True,
-        'can_view_contracts': True,
-        'can_manage_contracts': True,
-        'can_launch_approval': True,
-        'can_view_contractors': True,
-        'can_manage_contractors': True,
-        'can_view_templates': True,
-        'can_manage_templates': True,
-        'can_view_estimates': True,
-        'can_manage_estimates': True,
-        'can_view_approvals': True,
-        'can_manage_approval_routes': True,
-        'can_process_approval_tasks': True,
-        'can_view_payments': True,
-        'can_manage_payments': True,
-        'can_view_calendar': True,
-        'can_view_reports': True,
-        'can_view_organization': True,
-        'can_manage_organization': True,
-        'can_manage_users': True,
-        'can_manage_references': True,
-        'can_view_audit': True,
+        **build_permission_map(True),
         'scoped_to_assigned_contracts': False,
     },
     User.Role.DIRECTOR: {
+        **build_permission_map(False),
         'can_view_dashboard': True,
         'can_view_contracts': True,
-        'can_manage_contracts': False,
         'can_launch_approval': True,
         'can_view_contractors': True,
-        'can_manage_contractors': False,
-        'can_view_templates': False,
-        'can_manage_templates': False,
         'can_view_estimates': True,
-        'can_manage_estimates': False,
         'can_view_approvals': True,
-        'can_manage_approval_routes': False,
         'can_process_approval_tasks': True,
         'can_view_payments': True,
-        'can_manage_payments': False,
         'can_view_calendar': True,
         'can_view_reports': True,
-        'can_view_organization': False,
-        'can_manage_organization': False,
-        'can_manage_users': False,
-        'can_manage_references': False,
         'can_view_audit': True,
-        'scoped_to_assigned_contracts': False,
     },
     User.Role.MANAGER: {
+        **build_permission_map(False),
         'can_view_dashboard': True,
         'can_view_contracts': True,
         'can_manage_contracts': True,
@@ -71,92 +42,72 @@ ROLE_PERMISSIONS = {
         'can_manage_estimates': True,
         'can_view_approvals': True,
         'can_manage_approval_routes': True,
-        'can_process_approval_tasks': False,
         'can_view_payments': True,
-        'can_manage_payments': False,
         'can_view_calendar': True,
         'can_view_reports': True,
-        'can_view_organization': False,
-        'can_manage_organization': False,
-        'can_manage_users': False,
-        'can_manage_references': False,
         'can_view_audit': True,
-        'scoped_to_assigned_contracts': False,
     },
     User.Role.APPROVER: {
+        **build_permission_map(False),
         'can_view_dashboard': True,
         'can_view_contracts': True,
-        'can_manage_contracts': False,
-        'can_launch_approval': False,
-        'can_view_contractors': False,
-        'can_manage_contractors': False,
-        'can_view_templates': False,
-        'can_manage_templates': False,
         'can_view_estimates': True,
-        'can_manage_estimates': False,
         'can_view_approvals': True,
-        'can_manage_approval_routes': False,
         'can_process_approval_tasks': True,
         'can_view_payments': True,
         'can_manage_payments': True,
         'can_view_calendar': True,
         'can_view_reports': True,
-        'can_view_organization': False,
-        'can_manage_organization': False,
-        'can_manage_users': False,
-        'can_manage_references': False,
         'can_view_audit': True,
-        'scoped_to_assigned_contracts': False,
-    },
-    User.Role.ADMIN: {
-        'can_view_dashboard': False,
-        'can_view_contracts': False,
-        'can_manage_contracts': False,
-        'can_launch_approval': False,
-        'can_view_contractors': True,
-        'can_manage_contractors': True,
-        'can_view_templates': True,
-        'can_manage_templates': True,
-        'can_view_estimates': False,
-        'can_manage_estimates': False,
-        'can_view_approvals': True,
-        'can_manage_approval_routes': True,
-        'can_process_approval_tasks': False,
-        'can_view_payments': False,
-        'can_manage_payments': False,
-        'can_view_calendar': True,
-        'can_view_reports': False,
-        'can_view_organization': True,
-        'can_manage_organization': True,
-        'can_manage_users': True,
-        'can_manage_references': True,
-        'can_view_audit': True,
-        'scoped_to_assigned_contracts': False,
     },
 }
 
 
-def get_role_permissions(role: str) -> dict:
-    """Return permission flags for the current role."""
-    return ROLE_PERMISSIONS.get(role, {}).copy()
+def _membership_role(user: User):
+    if not getattr(user, 'is_authenticated', False):
+        return None
+    try:
+        return user.get_active_membership().role  # type: ignore[union-attr]
+    except Exception:
+        return None
+
+
+def get_role_permissions(user_or_role) -> dict:
+    """Return permission flags for a role string or user object."""
+    if isinstance(user_or_role, str):
+        return LEGACY_ROLE_PERMISSIONS.get(user_or_role, build_permission_map(False)).copy()
+
+    user = user_or_role
+    if not getattr(user, 'is_authenticated', False):
+        return build_permission_map(False)
+
+    role = _membership_role(user)
+    if role is not None:
+        return role.normalize_permissions()
+
+    return LEGACY_ROLE_PERMISSIONS.get(getattr(user, 'role', User.Role.USER), build_permission_map(False)).copy()
 
 
 def role_has_permission(user: User, permission_name: str) -> bool:
     if not getattr(user, 'is_authenticated', False):
         return False
-    return bool(get_role_permissions(user.role).get(permission_name, False))
+    return bool(get_role_permissions(user).get(permission_name, False))
 
 
 def user_is_scoped_to_assigned_contracts(user: User) -> bool:
-    return bool(get_role_permissions(user.role).get('scoped_to_assigned_contracts', False))
+    return bool(get_role_permissions(user).get('scoped_to_assigned_contracts', False))
 
 
 def scope_contract_queryset(queryset, user: User):
     """Restrict contract visibility according to the role matrix."""
-    if role_has_permission(user, 'can_manage_contracts') or user.role in [User.Role.OWNER, User.Role.DIRECTOR]:
+    if role_has_permission(user, 'can_manage_contracts'):
         return queryset
     if user_is_scoped_to_assigned_contracts(user):
-        return queryset.filter(approval_tasks__assigned_to=user).distinct()
+        return queryset.filter(
+            Q(approval_tasks__assigned_to=user)
+            | Q(responsible=user)
+            | Q(created_by=user),
+        ).distinct()
     if role_has_permission(user, 'can_view_contracts'):
         return queryset
     return queryset.none()
@@ -164,19 +115,24 @@ def scope_contract_queryset(queryset, user: User):
 
 def scope_related_to_contract_queryset(queryset, user: User, relation: str = 'contract'):
     """Restrict visibility for entities linked to contracts."""
-    if role_has_permission(user, 'can_manage_contracts') or user.role in [User.Role.OWNER, User.Role.DIRECTOR]:
+    if role_has_permission(user, 'can_manage_contracts'):
         return queryset
     if user_is_scoped_to_assigned_contracts(user):
-        return queryset.filter(**{f'{relation}__approval_tasks__assigned_to': user}).distinct()
+        return queryset.filter(
+            Q(**{f'{relation}__approval_tasks__assigned_to': user})
+            | Q(**{f'{relation}__responsible': user})
+            | Q(**{f'{relation}__created_by': user}),
+        ).distinct()
     if role_has_permission(user, 'can_view_contracts'):
         return queryset
     return queryset.none()
 
 
 def scope_approval_tasks_queryset(queryset, user: User):
-    """All authenticated users see all approval tasks.
-    Individual task actions (approve/reject) are protected by _ensure_task_is_mine."""
-    return queryset
+    """All authenticated users can see approval tasks by current org visibility."""
+    if role_has_permission(user, 'can_view_approvals'):
+        return queryset
+    return queryset.none()
 
 
 def scope_audit_queryset(queryset, user: User):
@@ -199,12 +155,16 @@ def _assigned_contract_ids(user: User):
 
 class IsOwner(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == User.Role.OWNER
+        if not request.user.is_authenticated:
+            return False
+        return role_has_permission(request.user, 'can_manage_organization')
 
 
 class IsOwnerOrAdmin(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role in [User.Role.OWNER, User.Role.ADMIN]
+        if not request.user.is_authenticated:
+            return False
+        return role_has_permission(request.user, 'can_manage_organization')
 
 
 class IsInOrganization(BasePermission):

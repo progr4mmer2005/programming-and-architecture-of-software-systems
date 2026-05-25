@@ -345,7 +345,11 @@ export default function CalendarPage() {
                           <span className={cn('text-base font-semibold', inCurrentMonth ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]')}>
                             {day.getDate()}
                           </span>
-                          {isToday ? <Badge tone="brand">Сегодня</Badge> : null}
+                          {isToday ? (
+                            <span className="inline-flex items-center rounded-full bg-[rgba(31,77,61,0.14)] px-2.5 py-1 text-xs font-semibold leading-none text-[var(--brand)] whitespace-nowrap">
+                              Сегодня
+                            </span>
+                          ) : null}
                         </div>
                         {dayEvents.length ? <Badge tone="neutral">{dayEvents.length}</Badge> : null}
                       </div>

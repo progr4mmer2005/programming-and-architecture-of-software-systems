@@ -284,22 +284,22 @@ export default function DashboardPage() {
           title="Статусы договоров"
           description="Текущая структура портфеля по жизненному циклу."
         >
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={statusData ?? []} dataKey="value" nameKey="status" cx="50%" cy="50%" outerRadius={96} innerRadius={56}>
-                    {(statusData ?? []).map((entry, index) => (
-                      <Cell key={`${entry.status}-${entry.value}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="space-y-3">
-              {(statusData ?? []).length ? (
-                (statusData ?? []).map((item, index) => (
+          {(statusData ?? []).length ? (
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={statusData ?? []} dataKey="value" nameKey="status" cx="50%" cy="50%" outerRadius={96} innerRadius={56}>
+                      {(statusData ?? []).map((entry, index) => (
+                        <Cell key={`${entry.status}-${entry.value}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-3">
+                {(statusData ?? []).map((item, index) => (
                   <div key={item.status} className="flex items-center justify-between rounded-2xl border border-[var(--line)] bg-white/70 px-4 py-3">
                     <div className="flex items-center gap-3">
                       <span className="h-3 w-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
@@ -307,12 +307,15 @@ export default function DashboardPage() {
                     </div>
                     <Badge tone="neutral">{formatNumber(item.value)}</Badge>
                   </div>
-                ))
-              ) : (
-                <EmptyState title="Статусы ещё не сформированы" description="После наполнения системы договорами здесь появится распределение по жизненному циклу." />
-              )}
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            <EmptyState
+              title="Статусы пока не рассчитаны"
+              description="В этой организации ещё нет договоров или у договоров не задан статус. После создания/обновления договоров здесь появится распределение."
+            />
+          )}
         </SectionCard>
 
         <SectionCard title="Ближайшие платежи" description="Следующие плановые обязательства в горизонте 30 дней.">
