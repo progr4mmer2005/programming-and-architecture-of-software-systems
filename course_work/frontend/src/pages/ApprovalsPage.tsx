@@ -108,7 +108,9 @@ export default function ApprovalsPage() {
       });
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['approval-tasks', user?.id] });
+      await queryClient.invalidateQueries({ queryKey: ['approval-tasks'] });
+      await queryClient.invalidateQueries({ queryKey: ['contracts'] });
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setTaskAction(null);
       setTaskComment('');
     },

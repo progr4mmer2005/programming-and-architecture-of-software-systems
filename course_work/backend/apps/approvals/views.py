@@ -6,6 +6,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
 from apps.audit.models import AuditLog
+from apps.contracts.models import Contract
 from apps.core.mixins import OrganizationContextMixin
 from apps.core.permissions import (
     CanManageApprovalRoutes,
@@ -95,6 +96,9 @@ class ApprovalTaskViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
         task.comment = serializer.validated_data.get('comment', '')
         task.completed_at = timezone.now()
         task.save()
+        if task.contract.status == Contract.Status.ON_APPROVAL:
+            task.contract.status = Contract.Status.DRAFT
+            task.contract.save(update_fields=['status', 'updated_at'])
         return Response({'status': 'rejected'})
 
     @action(detail=True, methods=['post'])
@@ -120,8 +124,8 @@ class ApprovalTaskViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
         ).order_by('stage_order').values_list('stage_order', flat=True).first()
 
         if next_stage_order is None:
-            if task.contract.status != 'active':
-                task.contract.status = 'active'
+            if task.contract.status != Contract.Status.READY_TO_SIGN:
+                task.contract.status = Contract.Status.READY_TO_SIGN
                 task.contract.save(update_fields=['status', 'updated_at'])
                 AuditLog.objects.create(
                     organization=self.request.organization,
@@ -129,8 +133,8 @@ class ApprovalTaskViewSet(OrganizationContextMixin, viewsets.ModelViewSet):
                     action='approval_completed',
                     entity_type='contract',
                     entity_id=task.contract.id,
-                    changes={'status': 'active'},
-                    description='Маршрут согласования завершён, договор переведён в статус "Действует".',
+                    changes={'status': Contract.Status.READY_TO_SIGN},
+                    description='Маршрут согласования завершён, договор переведён в статус "Готов к подписанию".',
                 )
             return
 
