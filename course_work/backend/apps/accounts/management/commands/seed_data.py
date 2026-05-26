@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.accounts.models import OrganizationMembership, OrganizationRole, build_permission_map
+from apps.accounts.models import OrganizationInvitation, OrganizationMembership, OrganizationRole, build_permission_map
 from apps.acts.models import Act
 from apps.approvals.models import ApprovalRoute, ApprovalTask
 from apps.contractors.models import Contractor, OrganizationContractor
@@ -67,14 +67,23 @@ class Command(BaseCommand):
                 route.stages = stages
                 route.save(update_fields=['stages'])
 
+        legacy_demo_inn = '7701234567'
+        legacy_org = Organization.objects.filter(inn=legacy_demo_inn).first()
+        if legacy_org is not None:
+            OrganizationMembership.objects.filter(organization=legacy_org).delete()
+            OrganizationInvitation.objects.filter(organization=legacy_org).delete()
+            OrganizationRole.objects.filter(organization=legacy_org).delete()
+            legacy_org.delete()
+        User.objects.filter(username__in=['admin', 'director', 'manager', 'approver', 'approver2']).delete()
+
         org, _ = Organization.objects.get_or_create(
-            inn='7701234567',
+            inn='7712456789',
             defaults={
-                'name': 'ООО "ТехноСервис"',
-                'legal_name': 'Общество с ограниченной ответственностью "ТехноСервис"',
-                'kpp': '770101001',
-                'ogrn': '1027700132195',
-                'address': 'г. Москва, ул. Ленина, д. 10',
+                'name': 'ООО "Курсовая Демо"',
+                'legal_name': 'Общество с ограниченной ответственностью "Курсовая Демо"',
+                'kpp': '771201001',
+                'ogrn': '1037712456789',
+                'address': 'г. Москва, ул. Академическая, д. 15',
             },
         )
         self.stdout.write(f'  Organization: {org.name}')
@@ -82,11 +91,11 @@ class Command(BaseCommand):
         OrganizationRole.create_default_user(org)
 
         users_data = [
-            {'username': 'admin', 'password': 'admin123', 'role': User.Role.SUPER_ADMIN, 'email': 'admin@techservice.ru', 'first_name': 'Алексей'},
-            {'username': 'director', 'password': 'dir123', 'role': User.Role.DIRECTOR, 'email': 'director@techservice.ru', 'first_name': 'Марина'},
-            {'username': 'manager', 'password': 'manager123', 'role': User.Role.MANAGER, 'email': 'manager@techservice.ru', 'first_name': 'Илья'},
-            {'username': 'approver', 'password': 'approver123', 'role': User.Role.APPROVER, 'email': 'approver@techservice.ru', 'first_name': 'Елена'},
-            {'username': 'approver2', 'password': 'approver234', 'role': User.Role.APPROVER, 'email': 'approver2@techservice.ru', 'first_name': 'Ольга'},
+            {'username': 'demo_owner', 'password': 'demo12345', 'role': User.Role.SUPER_ADMIN, 'email': 'demo_owner@course.local', 'first_name': 'Алексей'},
+            {'username': 'demo_director', 'password': 'demo12345', 'role': User.Role.DIRECTOR, 'email': 'demo_director@course.local', 'first_name': 'Марина'},
+            {'username': 'demo_manager', 'password': 'demo12345', 'role': User.Role.MANAGER, 'email': 'demo_manager@course.local', 'first_name': 'Илья'},
+            {'username': 'demo_approver1', 'password': 'demo12345', 'role': User.Role.APPROVER, 'email': 'demo_approver1@course.local', 'first_name': 'Елена'},
+            {'username': 'demo_approver2', 'password': 'demo12345', 'role': User.Role.APPROVER, 'email': 'demo_approver2@course.local', 'first_name': 'Ольга'},
         ]
         users = {}
         for data in users_data:
@@ -174,20 +183,20 @@ class Command(BaseCommand):
             name='Стандартный маршрут согласования',
             defaults={
                 'stages': [
-                    {'role': User.Role.APPROVER, 'order': 1, 'name': 'Первичная проверка согласующим лицом', 'assigned_to': users['approver'].id, 'assigned_to_name': users['approver'].get_full_name() or users['approver'].username},
-                    {'role': User.Role.APPROVER, 'order': 2, 'name': 'Повторная проверка согласующим лицом', 'assigned_to': users['approver2'].id, 'assigned_to_name': users['approver2'].get_full_name() or users['approver2'].username},
-                    {'role': User.Role.DIRECTOR, 'order': 3, 'name': 'Утверждение руководителем', 'assigned_to': users['director'].id, 'assigned_to_name': users['director'].get_full_name() or users['director'].username},
+                    {'role': User.Role.APPROVER, 'order': 1, 'name': 'Первичная проверка согласующим лицом', 'assigned_to': users['demo_approver1'].id, 'assigned_to_name': users['demo_approver1'].get_full_name() or users['demo_approver1'].username},
+                    {'role': User.Role.APPROVER, 'order': 2, 'name': 'Повторная проверка согласующим лицом', 'assigned_to': users['demo_approver2'].id, 'assigned_to_name': users['demo_approver2'].get_full_name() or users['demo_approver2'].username},
+                    {'role': User.Role.DIRECTOR, 'order': 3, 'name': 'Утверждение руководителем', 'assigned_to': users['demo_director'].id, 'assigned_to_name': users['demo_director'].get_full_name() or users['demo_director'].username},
                 ],
-                'created_by': users['admin'],
+                'created_by': users['demo_owner'],
             },
         )
         route.stages = [
-            {'role': User.Role.APPROVER, 'order': 1, 'name': 'Первичная проверка согласующим лицом', 'assigned_to': users['approver'].id, 'assigned_to_name': users['approver'].get_full_name() or users['approver'].username},
-            {'role': User.Role.APPROVER, 'order': 2, 'name': 'Повторная проверка согласующим лицом', 'assigned_to': users['approver2'].id, 'assigned_to_name': users['approver2'].get_full_name() or users['approver2'].username},
-            {'role': User.Role.DIRECTOR, 'order': 3, 'name': 'Утверждение руководителем', 'assigned_to': users['director'].id, 'assigned_to_name': users['director'].get_full_name() or users['director'].username},
+            {'role': User.Role.APPROVER, 'order': 1, 'name': 'Первичная проверка согласующим лицом', 'assigned_to': users['demo_approver1'].id, 'assigned_to_name': users['demo_approver1'].get_full_name() or users['demo_approver1'].username},
+            {'role': User.Role.APPROVER, 'order': 2, 'name': 'Повторная проверка согласующим лицом', 'assigned_to': users['demo_approver2'].id, 'assigned_to_name': users['demo_approver2'].get_full_name() or users['demo_approver2'].username},
+            {'role': User.Role.DIRECTOR, 'order': 3, 'name': 'Утверждение руководителем', 'assigned_to': users['demo_director'].id, 'assigned_to_name': users['demo_director'].get_full_name() or users['demo_director'].username},
         ]
         route.is_active = True
-        route.created_by = users['admin']
+        route.created_by = users['demo_owner']
         route.save()
 
         contracts_plan = [
@@ -221,8 +230,8 @@ class Command(BaseCommand):
                     'end_date': end_date,
                     'signing_date': start_date if status in [Contract.Status.SIGNED, Contract.Status.ACTIVE, Contract.Status.COMPLETED] else None,
                     'payment_terms': 'Оплата по актам выполненных работ в течение 10 рабочих дней.',
-                    'created_by': users['manager'],
-                    'responsible': users['manager'],
+                    'created_by': users['demo_manager'],
+                    'responsible': users['demo_manager'],
                 },
             )
             for field, value in {
@@ -238,13 +247,13 @@ class Command(BaseCommand):
                 'signing_date': start_date if status in [Contract.Status.SIGNED, Contract.Status.ACTIVE, Contract.Status.COMPLETED] else None,
                 'termination_date': today - timedelta(days=3) if status == Contract.Status.TERMINATED else None,
                 'payment_terms': 'Оплата по актам выполненных работ в течение 10 рабочих дней.',
-                'created_by': users['manager'],
-                'responsible': users['manager'],
+                'created_by': users['demo_manager'],
+                'responsible': users['demo_manager'],
             }.items():
                 setattr(contract, field, value)
             contract.save()
             if not contract.versions.exists():
-                create_contract_version(contract, users['manager'], 'Начальная версия договора')
+                create_contract_version(contract, users['demo_manager'], 'Начальная версия договора')
 
             stage_specs = [
                 ('Поставка', Decimal('0.45'), 0),
@@ -276,7 +285,7 @@ class Command(BaseCommand):
                 stage.end_date = start_date + timedelta(days=offset + 30)
                 stage.actual_start_date = stage.start_date if stage_status in [ContractStage.Status.IN_PROGRESS, ContractStage.Status.COMPLETED] else None
                 stage.actual_end_date = stage.end_date if stage_status == ContractStage.Status.COMPLETED else None
-                stage.responsible_user = users['manager']
+                stage.responsible_user = users['demo_manager']
                 stage.save()
                 stages.append(stage)
 
@@ -289,13 +298,13 @@ class Command(BaseCommand):
                         'title': f'Смета к договору {contract.number}',
                         'status': Estimate.Status.APPROVED if status in [Contract.Status.ACTIVE, Contract.Status.COMPLETED] else Estimate.Status.DRAFT,
                         'currency': 'RUB',
-                        'created_by': users['manager'],
+                        'created_by': users['demo_manager'],
                     },
                 )
                 estimate.title = f'Смета к договору {contract.number}'
                 estimate.status = Estimate.Status.APPROVED if status in [Contract.Status.ACTIVE, Contract.Status.COMPLETED] else Estimate.Status.DRAFT
                 estimate.currency = 'RUB'
-                estimate.created_by = users['manager']
+                estimate.created_by = users['demo_manager']
                 estimate.approved_at = timezone.now() - timedelta(days=5) if estimate.status == Estimate.Status.APPROVED else None
                 estimate.save()
                 item_specs = [
@@ -320,7 +329,7 @@ class Command(BaseCommand):
                     item.save()
                 estimate.recalculate_total()
                 if not estimate.versions.exists():
-                    create_estimate_version(estimate, users['manager'], 'Начальная версия сметы')
+                    create_estimate_version(estimate, users['demo_manager'], 'Начальная версия сметы')
 
             if status in [Contract.Status.ACTIVE, Contract.Status.COMPLETED]:
                 for act_index, stage in enumerate(stages[:2 if status == Contract.Status.ACTIVE else 3], start=1):
@@ -335,7 +344,7 @@ class Command(BaseCommand):
                     act.amount = stage.planned_amount or Decimal('0')
                     act.status = Act.Status.SIGNED
                     act.description = 'Подписанный акт выполненных работ.'
-                    act.created_by = users['manager']
+                    act.created_by = users['demo_manager']
                     act.save()
 
                     payment, _ = Payment.objects.get_or_create(
@@ -350,7 +359,7 @@ class Command(BaseCommand):
                     payment.planned_date = act.date + timedelta(days=10)
                     payment.paid_date = payment.planned_date if status == Contract.Status.COMPLETED or act_index == 1 else None
                     payment.status = Payment.Status.PAID if payment.paid_date else Payment.Status.PENDING
-                    payment.created_by = users['approver']
+                    payment.created_by = users['demo_approver1']
                     payment.save()
             else:
                 payment, _ = Payment.objects.get_or_create(
@@ -365,7 +374,7 @@ class Command(BaseCommand):
                 payment.status = Payment.Status.OVERDUE if payment.planned_date < today and status != Contract.Status.TERMINATED else Payment.Status.PENDING
                 payment.stage = None
                 payment.act = None
-                payment.created_by = users['approver']
+                payment.created_by = users['demo_approver1']
                 payment.save()
 
             if status == Contract.Status.ON_APPROVAL:
@@ -807,8 +816,8 @@ class Command(BaseCommand):
         )
         self.stdout.write('')
         self.stdout.write('=== Login credentials ===')
-        self.stdout.write('  Admin:     admin / admin123')
-        self.stdout.write('  Director:  director / dir123')
-        self.stdout.write('  Manager:   manager / manager123')
-        self.stdout.write('  Approver:  approver / approver123')
-        self.stdout.write('  Approver2: approver2 / approver234')
+        self.stdout.write('  Demo owner:     demo_owner / demo12345')
+        self.stdout.write('  Demo director:  demo_director / demo12345')
+        self.stdout.write('  Demo manager:   demo_manager / demo12345')
+        self.stdout.write('  Demo approver1: demo_approver1 / demo12345')
+        self.stdout.write('  Demo approver2: demo_approver2 / demo12345')
